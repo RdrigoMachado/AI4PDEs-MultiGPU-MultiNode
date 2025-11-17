@@ -104,19 +104,22 @@ def halo_exchange_Z(input_data):
         input_data[HALO_FRONT, :, :] = recv_data_prev
         input_data[HALO_BACK, :, :] = recv_data_next
 
+    return input_data.unsqueeze(dim=0).unsqueeze(dim=0)
 
-def gather_all_data(slice_size):
+def gather_all_data(local_tensor):
     rank = distributed.get_rank()
     comm_size = distributed.get_world_size()
 
-    local_slice = torch.arange(rank * slice_size, (rank + 1) * slice_size)
+    local_tensor_cpu = local_tensor.cpu()
 
     if rank == 0:
-        gathered = [torch.empty_like(local) for _ in range(comm_size)]
+        gathered_list = [torch.empty_like(local_tensor_cpu) for _ in range(world_size)]
     else:
-        gathered = None
+        gathered_list = None
 
-    distributed.gather(local, gather_list=gathered, dst=0)
+    distributed.gather(local_tensor_cpu, gather_list=gathered_list, dst=0)
 
     if rank == 0:
-        return torch,cat(gathered, dim=0)
+        return torch.cat(gathered_list, dim=2)
+    else:
+        return None
