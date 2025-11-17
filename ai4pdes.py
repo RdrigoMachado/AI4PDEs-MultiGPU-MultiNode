@@ -240,7 +240,7 @@ class AI4Urban(nn.Module):
     # Solid body
         if LIBM == True: [values_u, values_v, values_w] = self.solid_body(values_u, values_v, values_w, sigma, dt)
     # Padding velocity vectors
-        values_uu = apply_BC_u(values_u, rank, world_size)
+        values_uu = apply_BC_u(values_u, rank, world_size, ub)
         values_vv = apply_BC_v(values_v, rank, world_size)
         values_ww = apply_BC_w(values_w, rank, world_size)
         values_pp = apply_BC_p(values_p, rank, world_size)
@@ -265,7 +265,7 @@ class AI4Urban(nn.Module):
     # Solid body
         if LIBM == True: [b_u, b_v, b_w] = self.solid_body(b_u, b_v, b_w, sigma, dt)
     # Padding velocity vectors
-        b_uu = apply_BC_u(b_u, rank, world_size)
+        b_uu = apply_BC_u(b_u, rank, world_size, ub)
         b_vv = apply_BC_v(b_v, rank, world_size)
         b_ww = apply_BC_w(b_w, rank, world_size)
 
@@ -283,7 +283,7 @@ class AI4Urban(nn.Module):
     # Solid body
         if LIBM == True: [values_u, values_v, values_w] = self.solid_body(values_u, values_v, values_w, sigma, dt)
     # pressure
-        values_uu = apply_BC_u(values_u, rank, world_size)
+        values_uu = apply_BC_u(values_u, rank, world_size, ub)
         values_vv = apply_BC_v(values_v, rank, world_size)
         values_ww = apply_BC_w(values_w, rank, world_size)
 
@@ -441,6 +441,9 @@ def train(rank, world_size):
         if rank == 0:
             print('Tempo total de simulação:', (end-start))
 
+        if dist.is_initialized():
+            dist.destroy_process_group()
+
 
 if __name__ == "__main__":
     # Use o número de GPUs disponíveis, ou defina manualmente
@@ -477,6 +480,3 @@ if __name__ == "__main__":
     print(f"Iniciando {world_size} processos...")
     # REMOVA os tensores globais dos argumentos
     mp.spawn(train, args=(world_size,), nprocs=world_size, join=True)
-
-    if dist.is_initialized():
-        dist.destroy_process_group()
