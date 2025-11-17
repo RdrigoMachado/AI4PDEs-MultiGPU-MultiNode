@@ -149,7 +149,10 @@ ctime = 0                         # Initialise ctime
 save_fig = True                   # Save results
 Restart = False                   # Restart
 eplsion_k = 1e-04                 # Stablisatin factor in Petrov-Galerkin for velocity
-diag = np.array(wA)[0,0,1,1,1]    # Diagonal component
+
+#diag = np.array(wA)[0,0,1,1,1]    # Diagonal component
+diag = wA[0,0,1,1,1].item()
+
 #######################################################
 # # # ################################### # # #
 # # # #########  AI4Urban MAIN ########## # # #
@@ -183,6 +186,11 @@ class AI4Urban(nn.Module):
         self.zadv.bias.data = bias_initializer
 
 ###############################################################
+    def solid_body(self, values_u, values_v, values_w, sigma, dt):
+        values_u = values_u / (1+dt*sigma)
+        values_v = values_v / (1+dt*sigma)
+        values_w = values_w / (1+dt*sigma)
+        return values_u, values_v, values_w
 
     def F_cycle_MG(self, rank, world_size, values_uu, values_vv, values_ww, values_p, values_pp, iteration, diag, dt, nlevel, ratio_x, ratio_y):
         boundary_condition_p = self.implementations_p.get(rank, None)
@@ -455,7 +463,9 @@ if __name__ == "__main__":
     n_out = 1000
     iteration = 10
     save_fig = True
-    diag = np.array(wA)[0,0,1,1,1]
+    # diag = np.array(wA)[0,0,1,1,1]
+    diag = wA[0,0,1,1,1].item()
+
     ub = -1.0
     Re = 0.001
     LIBM = True
@@ -467,3 +477,6 @@ if __name__ == "__main__":
     print(f"Iniciando {world_size} processos...")
     # REMOVA os tensores globais dos argumentos
     mp.spawn(train, args=(world_size,), nprocs=world_size, join=True)
+
+    if dist.is_initialized():
+        dist.destroy_process_group()
