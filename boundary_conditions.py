@@ -69,8 +69,10 @@ def apply_BC_w(w, w_padded, rank, world_size):
     # W é 0 em todas as bordas X e Y
     w_padded[0, 0, :, :, 0].fill_(0.0)
     w_padded[0, 0, :, :, -1].fill_(0.0)
-    w_padded[0, 0, :, 0, :].fill_(0.0)
-    w_padded[0, 0, :, -1, :].fill_(0.0)
+    w_padded[0, 0, :, 0, :] = w_padded[0, 0, :, 1, :]   # Y-Min
+    w_padded[0, 0, :, -1, :] = w_padded[0, 0, :, -2, :] # Y-Max
+    # w_padded[0, 0, :, 0, :].fill_(0.0)
+    # w_padded[0, 0, :, -1, :].fill_(0.0)
 
     if rank == 0:
         # Z-Min (Fundo, no-slip)
