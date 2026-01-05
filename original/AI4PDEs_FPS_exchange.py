@@ -138,8 +138,8 @@ w4[0,0,2,:,:] = -p_div_z3/dx*0.5
 w_res = torch.zeros([1,1,2,2,2])
 w_res[0,0,:,:,:] = 0.125
 ################# Numerical parameters ################
-ntime = 20000                     # Time steps
-n_out = 1000                       # Results output
+ntime = 40                     # Time steps
+n_out = 10                       # Results output
 iteration = 10                    # Multigrid iteration
 nrestart = 0                      # Last time step for restart
 ctime_old = 0                     # Last ctime for restart
