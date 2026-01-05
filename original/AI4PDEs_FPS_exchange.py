@@ -63,11 +63,11 @@ dt = 0.01
 ub = -1.0
 ratio_x = int(nx/nz)
 ratio_y = int(ny/nz)
+
 nlevel = int(math.log(min(nx, ny, nz), 2)) + 1
-# ===> Marcelo
 print("nlevel: ", nlevel)
-nlevel = 6
-print("nlevel: ", nlevel)
+nlevel = 5
+print("Forced nlevel: ", nlevel)
 # ===> Marcelo
 print('How many levels in multigrid:', nlevel)
 print('Aspect ratio:', ratio_x)
