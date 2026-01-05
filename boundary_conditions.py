@@ -77,8 +77,8 @@ def apply_BC_w(w, w_padded, rank, world_size):
         w_padded[0, 0, 0, :, :].fill_(0.0)
 
     if rank == (world_size - 1):
-        # Z-Max (Topo, free-slip)
-        w_padded[0, 0, -1, :, :] = w_padded[0, 0, -2, :, :]
+        # Z-Max (Topo, no-slip)
+        w_padded[0, 0, -1, :, :].fill_(0.0)
 
     return w_padded
 
