@@ -1,284 +1,71 @@
 #!/usr/bin/env python
-
-#-- Import general libraries
 import os
 import numpy as np
-import pandas as pd
 import time
 import math
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import matplotlib.pyplot as plt
 import torch.distributed as distributed
-import torch.multiprocessing as mp
+import matplotlib.pyplot as plt
 
-from halo_exchange import halo_exchange_Z, init_process, distribute_tensor, gather_all_data
-# CORREÇÃO 4: Adicionado apply_BC_k nos imports
-from boundary_conditions import apply_BC_k, apply_BC_u, apply_BC_v, apply_BC_w, apply_BC_p, apply_BC_cw
+from halo_exchange import init_process, gather_all_data
+from solver import AI4Urban
 
 # # # ################################### # # #
 # # # ######   Numerial parameters ###### # # #
 # # # ################################### # # #
 DEBUG_PRINTS = False
-GATHER = True
-io_time = 0
-nx = 800
-# ny = 320
-nz = 320
-# nx = 960
-ny = 320
-# nz = 480
-
+SAVE = True
+nx = 800 ; ny = 320 ; nz = 320
 dx = 0.0125 ; dy = 0.0125 ; dz = 0.0125
 Re = 0.001
 dt = 0.01
 ub = -1.0
+iteration = 10
+ntime = 40
+n_out = 10
+LIBM = True
+
 ratio_x = int(nx/nz)
 ratio_y = int(ny/nz)
-
-# AVISO: Com nz=40, nlevel=6 pode ser muito alto (40 -> 20 -> 10 -> 5 -> 2 -> 1).
-# Se der erro no Upsample, reduza para 4 ou 5.
-nlevel = 5
-
-# # # ################################### # # #
-# # # ######    Linear Filter      ###### # # #
-# # # ################################### # # #
-bias_initializer = torch.tensor([0.0])
-# Laplacian filters
-pd1 = torch.tensor([[2/26, 3/26, 2/26], [3/26, 6/26, 3/26], [2/26, 3/26, 2/26]])
-pd2 = torch.tensor([[3/26, 6/26, 3/26], [6/26, -88/26, 6/26], [3/26, 6/26, 3/26]])
-pd3 = torch.tensor([[2/26, 3/26, 2/26], [3/26, 6/26, 3/26], [2/26, 3/26, 2/26]])
-
-w1 = torch.zeros([1, 1, 3, 3, 3])
-wA = torch.zeros([1, 1, 3, 3, 3])
-w1[0, 0, 0,:,:] = pd1/dx**2; w1[0, 0, 1,:,:] = pd2/dx**2; w1[0, 0, 2,:,:] = pd3/dx**2
-wA[0, 0, 0,:,:] = -pd1/dx**2; wA[0, 0, 1,:,:] = -pd2/dx**2; wA[0, 0, 2,:,:] = -pd3/dx**2
-
-# Gradient filters
-p_div_x1 = torch.tensor([[-0.014, 0.0, 0.014], [-0.056, 0.0, 0.056], [-0.014, 0.0, 0.014]])
-p_div_x2 = torch.tensor([[-0.056, 0.0, 0.056], [-0.22, 0.0, 0.22],   [-0.056, 0.0, 0.056]])
-p_div_x3 = torch.tensor([[-0.014, 0.0, 0.014], [-0.056, 0.0, 0.056], [-0.014, 0.0, 0.014]])
-p_div_y1 = torch.tensor([[0.014, 0.056, 0.014],  [0.0, 0.0, 0.0], [-0.014, -0.056, -0.014]])
-p_div_y2 = torch.tensor([[0.056, 0.22, 0.056],   [0.0, 0.0, 0.0], [-0.056, -0.22, -0.056]])
-p_div_y3 = torch.tensor([[0.014, 0.056, 0.014],  [0.0, 0.0, 0.0], [-0.014, -0.056, -0.014]])
-p_div_z1 = torch.tensor([[0.014, 0.056, 0.014],  [0.056, 0.22, 0.056], [0.014, 0.056, 0.014]])
-p_div_z2 = torch.tensor([[0.0, 0.0, 0.0],        [0.0, 0.0, 0.0],      [0.0, 0.0, 0.0]])
-p_div_z3 = torch.tensor([[-0.014, -0.056, -0.014], [-0.056, -0.22, -0.056], [-0.014, -0.056, -0.014]])
-
-w2 = torch.zeros([1,1,3,3,3]); w3 = torch.zeros([1,1,3,3,3]); w4 = torch.zeros([1,1,3,3,3])
-w2[0,0,0,:,:] = -p_div_x1/dx*0.5; w2[0,0,1,:,:] = -p_div_x2/dx*0.5; w2[0,0,2,:,:] = -p_div_x3/dx*0.5
-w3[0,0,0,:,:] = -p_div_y1/dx*0.5; w3[0,0,1,:,:] = -p_div_y2/dx*0.5; w3[0,0,2,:,:] = -p_div_y3/dx*0.5
-w4[0,0,0,:,:] = -p_div_z1/dx*0.5; w4[0,0,1,:,:] = -p_div_z2/dx*0.5; w4[0,0,2,:,:] = -p_div_z3/dx*0.5
-
-# Restriction filters
-w_res = torch.zeros([1,1,2,2,2])
-w_res[0,0,:,:,:] = 0.125
-
-################# Numerical parameters ################
-ntime = 40                       # Time steps
-n_out = 10                        # Results output
-iteration = 10                    # Multigrid iteration
-nrestart = 0                      # Last time step for restart
-ctime_old = 0                     # Last ctime for restart
-LIBM = True                       # Immersed boundary method
-ctime = 0                         # Initialise ctime
-save_fig = True                   # Save results
-Restart = False                   # Restart
-eplsion_k = 1e-04                 # Stablisatin factor in Petrov-Galerkin for velocity
 diag = wA[0,0,1,1,1].item()       # Diagonal component
+#nlevels is defined by calculate_max_nlevel after backend is initialized
 
-class AI4Urban(nn.Module):
-    """docstring for AI4Urban"""
-    def __init__(self):
-        super(AI4Urban, self).__init__()
-        self.xadv = nn.Conv3d(1, 1, kernel_size=3, stride=1, padding=0)
-        self.yadv = nn.Conv3d(1, 1, kernel_size=3, stride=1, padding=0)
-        self.zadv = nn.Conv3d(1, 1, kernel_size=3, stride=1, padding=0)
-        self.diff = nn.Conv3d(1, 1, kernel_size=3, stride=1, padding=0)
+def get_neighbors(rank, world_size):
+    neighbors = {
+        'left': -1, 'right': -1,
+        'top': -1, 'bottom': -1,
+        'back': -1, 'front': -1
+    }
 
-        self.A = nn.Conv3d(1, 1, kernel_size=3, stride=1, padding=0)
-        self.res = nn.Conv3d(1, 1, kernel_size=2, stride=2, padding=0)
-        self.prol = nn.Sequential(nn.Upsample(scale_factor=2, mode='nearest'),)
+    # --- X-Axis (Left/Right) ---
+    if rank % 2 == 0: # Left Column (0, 2, 4...)
+        neighbors['left'] = -1
+        neighbors['right'] = rank + 1
+    else:             # Right Column (1, 3, 5...)
+        neighbors['left'] = rank - 1
+        neighbors['right'] = -1
 
-        self.A.weight.data = wA
-        self.res.weight.data = w_res
-        self.diff.weight.data = w1
-        self.xadv.weight.data = w2
-        self.yadv.weight.data = w3
-        self.zadv.weight.data = w4
+    # --- Y-Axis (Top/Bottom) ---
+    if rank % 4 < 2:  # Top Rank: Local (0, 1)
+        neighbors['top'] = -1
+        neighbors['bottom'] = rank + 2
+    else:             # Bottom Rank: Local (2, 3)
+        neighbors['top'] = rank - 2
+        neighbors['bottom'] = -1
 
-        # Bias init
-        self.A.bias.data = bias_initializer
-        self.res.bias.data = bias_initializer
-        self.diff.bias.data = bias_initializer
-        self.xadv.bias.data = bias_initializer
-        self.yadv.bias.data = bias_initializer
-        self.zadv.bias.data = bias_initializer
+    # --- Z-Axis (Inter Nodes) ---
+    # Z is not in the first slice
+    if rank >= 4:
+        neighbors['back'] = rank - 4
 
-    def solid_body(self, values_u, values_v, values_w, sigma, dt):
-        values_u = values_u / (1+dt*sigma)
-        values_v = values_v / (1+dt*sigma)
-        values_w = values_w / (1+dt*sigma)
-        return values_u, values_v, values_w
+    # Z is not on the last Slice
+    if rank < (world_size - 4):
+        neighbors['front'] = rank + 4
 
-    def F_cycle_MG(self, rank, world_size, local_rank, values_uu, values_vv, values_ww, values_p, values_pp, iteration, diag, dt, nlevel, ratio_x, ratio_y):
-        global io_time
-        b = -(self.xadv(values_uu) + self.yadv(values_vv) + self.zadv(values_ww)) / dt
+    return neighbors
 
-        for MG in range(iteration):
-            # CORREÇÃO 3: w deve ter o mesmo tamanho que values_p (ou b), não (1,1,1,1,1)
-            # w = torch.zeros_like(b)
-            w = torch.zeros((1,1,1,1,1), device=f"cuda:{local_rank}")
-
-            r = self.A(values_pp) - b
-            r_s = []
-            r_s.append(r)
-
-            # Restriction
-            for i in range(1, nlevel-1):
-                r = self.res(r)
-                r_s.append(r)
-
-            # Prolongation
-            for i in reversed(range(1,nlevel-1)):
-                ww = apply_BC_cw(w, rank, world_size)
-
-                #start = time.time()
-                ww = halo_exchange_Z(ww)
-                #io_time += time.time()-start
-
-                w = w - self.A(ww) / diag + r_s[i] / diag
-                w = self.prol(w)
-
-            values_p = values_p - w
-            values_p = values_p - self.A(values_pp) / diag + b / diag
-            values_pp = apply_BC_p(values_p, values_pp, rank, world_size)
-
-            #start = time.time()
-            values_pp = halo_exchange_Z(values_pp)
-            #io_time += time.time()-start
-
-        return values_p, w, r
-
-    def PG_vector(self, rank, world_size, values_uu, values_vv, values_ww, values_u, values_v, values_w, k1, k_uu, k_vv, k_ww, sigma):
-        global io_time
-
-        k_u = torch.ones_like(values_u).detach()
-        k_v = torch.ones_like(values_v).detach()
-        k_w = torch.ones_like(values_w).detach()
-
-        k_uu = apply_BC_k(k_u, k_uu, rank, world_size)
-        k_vv = apply_BC_k(k_v, k_vv, rank, world_size)
-        k_ww = apply_BC_k(k_w, k_ww, rank, world_size)
-
-        #start = time.time()
-        k_uu = halo_exchange_Z(k_uu)
-        k_vv = halo_exchange_Z(k_vv)
-        k_ww = halo_exchange_Z(k_ww)
-        #io_time += time.time()-start
-
-        k_u = 0.5 * (k_u * self.diff(values_uu) + self.diff(values_uu * k_uu) - values_u * self.diff(k_uu))
-        k_v = 0.5 * (k_v * self.diff(values_vv) + self.diff(values_vv * k_vv) - values_v * self.diff(k_vv))
-        k_w = 0.5 * (k_w * self.diff(values_ww) + self.diff(values_ww * k_ww) - values_w * self.diff(k_ww))
-        return k_u, k_v, k_w
-
-    def forward(self,rank, world_size, values_u, values_uu, values_v, values_vv, values_w, values_ww, values_p, values_pp, b_uu, b_vv, b_ww, k1, dt, iteration, k_uu, k_vv, k_ww,sigma):
-        global io_time
-        # Solid body
-        if LIBM == True: [values_u, values_v, values_w] = self.solid_body(values_u, values_v, values_w, sigma, dt)
-
-        # Padding velocity vectors
-        if (DEBUG_PRINTS == True):
-            print('Apply rules and exchange: U, V, W, P')
-
-        values_uu = apply_BC_u(values_u, values_uu, rank,world_size, ub)
-        values_vv = apply_BC_v(values_v, values_vv, rank,world_size)
-        values_ww = apply_BC_w(values_w, values_ww, rank,world_size)
-        values_pp = apply_BC_p(values_p, values_pp, rank,world_size)
-
-        #start = time.time()
-        values_uu = halo_exchange_Z(values_uu)
-        values_vv = halo_exchange_Z(values_vv)
-        values_ww = halo_exchange_Z(values_ww)
-        values_pp = halo_exchange_Z(values_pp)
-        #io_time += time.time()-start
-
-        # First step for solving uvw
-        if (DEBUG_PRINTS == True):
-            print('Apply rules and exchange: bU, bV, bW')
-
-        [k_u, k_v, k_w] = self.PG_vector(rank, world_size, values_uu, values_vv, values_ww, values_u, values_v, values_w, k1, k_uu, k_vv, k_ww, sigma)
-        b_u = values_u + 0.5 * (Re * k_u * dt - values_u * self.xadv(values_uu) * dt - values_v * self.yadv(values_uu) * dt - values_w * self.zadv(values_uu) * dt) - self.xadv(values_pp) * dt
-        b_v = values_v + 0.5 * (Re * k_v * dt - values_u * self.xadv(values_vv) * dt - values_v * self.yadv(values_vv) * dt - values_w * self.zadv(values_vv) * dt) - self.yadv(values_pp) * dt
-        b_w = values_w + 0.5 * (Re * k_w * dt - values_u * self.xadv(values_ww) * dt - values_v * self.yadv(values_ww) * dt - values_w * self.zadv(values_ww) * dt) - self.zadv(values_pp) * dt
-
-        # Solid body
-        if LIBM == True: [b_u, b_v, b_w] = self.solid_body(b_u, b_v, b_w, sigma, dt)
-
-        # Padding velocity vectors
-        if (DEBUG_PRINTS == True):
-            print('Apply rules and exchange: buu, bvv, bww')
-
-        b_uu = apply_BC_u(b_u,b_uu, rank, world_size, ub)
-        b_vv = apply_BC_v(b_v,b_vv, rank, world_size)
-        b_ww = apply_BC_w(b_w,b_ww, rank, world_size)
-
-        #start = time.time()
-        b_uu = halo_exchange_Z(b_uu)
-        b_vv = halo_exchange_Z(b_vv)
-        b_ww = halo_exchange_Z(b_ww)
-        #io_time += time.time()-start
-
-        # Second step for solving uvw
-        if (DEBUG_PRINTS == True):
-            print('Apply rules and exchange: U, V, W')
-
-        [k_u, k_v, k_w] = self.PG_vector(rank,world_size, b_uu, b_vv, b_ww, b_u, b_v, b_w, k1, k_uu, k_vv, k_ww, sigma)
-        values_u = values_u + Re * k_u * dt - b_u * self.xadv(b_uu) * dt - b_v * self.yadv(b_uu) * dt - b_w * self.zadv(b_uu) * dt - self.xadv(values_pp) * dt
-        values_v = values_v + Re * k_v * dt - b_u * self.xadv(b_vv) * dt - b_v * self.yadv(b_vv) * dt - b_w * self.zadv(b_vv) * dt - self.yadv(values_pp) * dt
-        values_w = values_w + Re * k_w * dt - b_u * self.xadv(b_ww) * dt - b_v * self.yadv(b_ww) * dt - b_w * self.zadv(b_ww) * dt - self.zadv(values_pp) * dt
-
-        # Solid body
-        if LIBM == True: [values_u, values_v, values_w] = self.solid_body(values_u, values_v, values_w, sigma, dt)
-
-        # pressure
-        if (DEBUG_PRINTS == True):
-            print('Apply rules and exchange: Uu, Vv, Ww')
-
-        values_uu = apply_BC_u(values_u,values_uu, rank, world_size, ub)
-        values_vv = apply_BC_v(values_v,values_vv, rank, world_size)
-        values_ww = apply_BC_w(values_w,values_ww, rank, world_size)
-
-        #start = time.time()
-        values_uu = halo_exchange_Z(values_uu)
-        values_vv = halo_exchange_Z(values_vv)
-        values_ww = halo_exchange_Z(values_ww)
-        #io_time += time.time()-start
-
-        [values_p, w ,r] = self.F_cycle_MG(rank, world_size, local_rank, values_uu, values_vv, values_ww, values_p, values_pp, iteration, diag, dt, nlevel, ratio_x, ratio_y)
-
-        # Pressure gradient correction
-        if (DEBUG_PRINTS == True):
-            print('Apply rules and exchange: PP, U, V, W')
-
-        values_pp = apply_BC_p(values_p, values_pp, rank, world_size)
-
-        #start = time.time()
-        values_pp = halo_exchange_Z(values_pp)
-        #io_time += time.time()-start
-
-        values_u = values_u - self.xadv(values_pp) * dt
-        values_v = values_v - self.yadv(values_pp) * dt
-        values_w = values_w - self.zadv(values_pp) * dt
-
-        # Solid body
-        if LIBM == True: [values_u, values_v, values_w] = self.solid_body(values_u, values_v, values_w, sigma, dt)
-        return values_u, values_v, values_w, values_p, w, r
-
-def train(rank, world_size, local_rank):
-    global dt, ntime, nx, ny, nz, n_out, iteration, save_fig, diag, ub, Re, LIBM, Restart, nrestart, ctime, ctime_old, wA, w_res, w1, w2, w3, w4, io_time, comm_time
-
+def train(rank, world_size, local_rank,nlevel, ratio_x, ratio_y):
+    my_neighbors = get_neighbors(rank, world_size)
     # Get Device ID per local rank
     device = torch.device(f"cuda:{local_rank}")
 
@@ -314,17 +101,6 @@ def train(rank, world_size, local_rank):
     k_vv = torch.zeros(local_shape_padded, device=device)
     k_ww = torch.zeros(local_shape_padded, device=device)
 
-    if local_rank == 0:
-        print('============== Numerical parameters ===============')
-        print(f'Global Mesh resolution: (1, 1, {nz}, {ny}, {nx})')
-        print(f'Local Mesh resolution (Rank 0): {local_shape}')
-        print('Time step:', ntime)
-        print('Initial time:', ctime)
-        print('Diagonal componet:', diag)
-        # save_path = 'FPS'
-        save_path = 'FPS'
-        os.makedirs(save_path, exist_ok=True)
-
     if Restart == True:
         nrestart = 8000
         ctime_old = nrestart * dt
@@ -343,80 +119,100 @@ def train(rank, world_size, local_rank):
 
     model = AI4Urban().to(device)
 
+    if local_rank == 0:
+        print('============== Numerical parameters ===============')
+        print(f'Global Mesh resolution: (1, 1, {nz}, {ny}, {nx})')
+        print(f'Local Mesh resolution (Rank 0): {local_shape}')
+        print(f'Time step: {dt}, Steps: {ntime}')
+        print('Diagonal componet:', diag)
+        os.makedirs('FPS', exist_ok=True)
+
     start = time.time()
     with torch.no_grad():
-        if (DEBUG_PRINTS == True):
-            print('Main loop start, rank: ', rank)
-
         for itime in range(nrestart + 1, ntime + 1):
             if (DEBUG_PRINTS == True and rank == 0):
-                print(f'Time step: {itime}')
+                print(f'Step {itime}/{ntime}')
 
             [values_u, values_v, values_w, values_p, w, r] = model(
                 rank, world_size,
                 values_u, values_uu, values_v, values_vv, values_w, values_ww,
                 values_p, values_pp, b_uu, b_vv, b_ww,
-                k1, dt, iteration, k_uu, k_vv, k_ww, sigma
+                k1, dt, iteration, k_uu, k_vv, k_ww, sigma,
+                nlevel, ratio_x, ratio_y,
+                my_neighbors
             )
 
-            if save_fig == GATHER and itime % n_out == 0:
-                gather_start = time.time()
+            # Outputs
+            if save_fig(itime, n_out):
+                save_results(values_u, values_v, values_w, values_p, itime, rank)
 
-                # Importante: use .cpu() antes de gather para economizar VRAM no Mestre
-                global_u = gather_all_data(values_u)
-                global_v = gather_all_data(values_v)
-                global_w = gather_all_data(values_w)
-                global_p = gather_all_data(values_p)
+    end = time.time()
+    if rank == 0:
+        print(f'\nSimulation completed. Execution time: {end-start:.2f}s')
 
-                if rank == 0:
-                    print(f"Saving weights - step {itime}")
-                    np.save(save_path+"/w"+str(itime), arr=global_w.numpy()[0,0,:,:])
-                    np.save(save_path+"/v"+str(itime), arr=global_v.numpy()[0,0,:,:])
-                    np.save(save_path+"/u"+str(itime), arr=global_u.numpy()[0,0,:,:])
-                    np.save(save_path+"/p"+str(itime), arr=global_p.numpy()[0,0,:,:])
+def save_fig(itime, n_out):
+    return SAVE and itime % n_out == 0
 
-                    try:
-                        # 1. Seleciona o slice central em Z (ou o índice 160 fixo se preferir)
-                        # global_u shape: (1, 1, nz, ny, nx)
-                        z_slice_idx = global_u.shape[2] // 2
+def save_results(u, v, w, p, itime, rank):
+    # Função auxiliar para salvar resultados
+    global_u = gather_all_data(u)
+    global_v = gather_all_data(v)
+    global_w = gather_all_data(w)
+    global_p = gather_all_data(p)
 
-                        # Extrai os dados para Numpy (já está na CPU pois veio do gather)
-                        # [0, 0, z, y, x]
-                        u_plot = global_u.numpy()[0, 0, z_slice_idx, :, :]
+    if rank == 0:
+        print(f"Saving step {itime}")
+        try:
+            z_slice = global_u.shape[2] // 2
+            u_plot = global_u.numpy()[0, 0, z_slice, :, :]
+            plt.figure(figsize=(10, 6))
+            plt.imshow(u_plot, cmap='jet', origin='upper')
+            plt.colorbar(label='U (m/s)')
+            plt.title(f'Velocity U - Z={z_slice} - Step {itime}')
+            plt.gca().invert_yaxis()
+            plt.savefig(f"FPS/Flow_U_step_{itime:05d}.jpg", dpi=100)
+            plt.close()
+        except Exception as e:
+            print(f"Error saving image: {e}")
 
-                        plt.figure(figsize=(10, 6))
+def calculate_max_nlevel(nx_global, ny_global, nz_global, world_size):
+    # 1. Calcula as dimensões locais (Subdomínio de cada GPU)
+    # Assumindo sua topologia: 2 em X, 2 em Y, e (world_size/4) em Z
+    # Se world_size=16 (4 nós), temos 4 fatias em Z.
 
-                        # Plot com colormap 'jet' ou 'RdBu_r' (comum para velocidade)
-                        plt.imshow(u_plot, cmap='jet', origin='upper')
-                        plt.colorbar(label='Velocity U (m/s)')
+    num_z_slices = max(1, world_size // 4)
 
-                        # Título com o passo de tempo
-                        plt.title(f'Velocity U - Z={z_slice_idx} - Step {itime}')
+    local_nx = nx_global // 2  # Dividido em 2 colunas
+    local_ny = ny_global // 2  # Dividido em 2 linhas
+    local_nz = nz_global // num_z_slices
 
-                        # Inverte Y conforme seu script original
-                        plt.gca().invert_yaxis()
+    print(f"Dimensões Locais: X={local_nx}, Y={local_ny}, Z={local_nz}")
 
-                        # Salva na pasta correta com nome dinâmico
-                        filename = f"{save_path}/Flow_U_step_{itime:05d}.jpg"
-                        plt.savefig(filename, dpi=150)
+    # 2. Simula o Multigrid para encontrar o gargalo
+    level = 1
+    current_x, current_y, current_z = local_nx, local_ny, local_nz
 
-                        # Limpa a memória da figura (CRUCIAL em loops)
-                        plt.close()
+    while True:
+        # Verifica se alguma dimensão ficaria ímpar ou pequena demais (< 2)
+        if (current_x % 2 != 0) or (current_y % 2 != 0) or (current_z % 2 != 0):
+            print(f"Parou no Nível {level}: Dimensão ímpar encontrada ({current_x}, {current_y}, {current_z})")
+            break
 
-                    except Exception as e:
-                        print(f"Erro ao salvar imagem: {e}")
+        if (current_x < 4) or (current_y < 4) or (current_z < 4):
+            print(f"Parou no Nível {level}: Dimensão muito pequena (< 4)")
+            break
 
-                    gather_end = time.time()
-                    print(f'\nGather weights enlapsed time: {gather_end-gather_start:.2f}s')
+        # Avança para o próximo nível (Restrição)
+        current_x //= 2
+        current_y //= 2
+        current_z //= 2
+        level += 1
 
-
-        end = time.time()
-        if rank == 0:
-            # print(f'\nComm time: {comm_time:.2f}s')
-            print(f'\nSimulation completed. Execution time: {end-start:.2f}s')
+    return level
 
 if __name__ == "__main__":
     rank, world_size, local_rank = init_process(backend='nccl')
+    nlevel = calculate_max_nlevel(nx, ny, nz, world_size)
 
     if rank == 0:
         print('How many levels in multigrid:', nlevel)
@@ -432,7 +228,7 @@ if __name__ == "__main__":
             exit()
 
     try:
-        train(rank, world_size, local_rank)
+        train(rank, world_size, local_rank, nlevel, ratio_x, ratio_y)
     except KeyboardInterrupt:
         if rank == 0:
             print("\nSimulação interrompida pelo usuário.")
