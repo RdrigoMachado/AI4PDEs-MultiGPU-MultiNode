@@ -16,7 +16,7 @@ from solver import AI4Urban
 DEBUG_PRINTS = False
 SAVE = True
 Restart = False
-nx = 800 ; ny = 320 ; nz = 320
+nx = 800 ; ny = 320 ; nz = 512
 dx = 0.0125 ; dy = 0.0125 ; dz = 0.0125
 Re = 0.001
 dt = 0.01
@@ -70,17 +70,26 @@ def train(rank, world_size, local_rank,nlevel, ratio_x, ratio_y):
     # Get Device ID per local rank
     device = torch.device(f"cuda:{local_rank}")
 
-    # compute z local size
-    local_nz = nz // world_size
-    z_start = rank * local_nz
-    z_end = (rank + 1) * local_nz
+    num_z_slices = world_size // 4
 
-    # Initialize tensors shapes
-    local_shape = (1,1, local_nz, ny, nx)
 
-    # CORREÇÃO 2: Padding de +2 (1 de cada lado) para bater com boundary_conditions.py
-    # Antes era +4, o que gera inconsistência de memória
-    local_shape_padded = (1,1, local_nz + 2, ny + 2, nx + 2)
+    local_nz = nz // num_z_slices
+    local_nx = nx // 2
+    local_ny = ny // 2
+
+    my_z_slice_idx = rank // 4
+    z_start_idx = my_z_slice_idx * local_nz
+    # Offset X e Y para o Sigma/Coordenadas
+    # Se sou coluna par (0,2...), começo no 0. Se ímpar, começo no meio.
+    x_start_val = 0.0 if (rank % 2 == 0) else (local_nx * dx)
+
+    # Se sou linha de cima (0,1...), começo no 0. Se baixo, começo no meio.
+    y_start_val = 0.0 if (rank % 4 < 2) else (local_ny * dy)
+    z_start_val = z_start_idx * dz
+
+    local_shape = (1, 1, local_nz, local_ny, local_nx)
+    # Padding de +2 (1 de cada lado)
+    local_shape_padded = (1, 1, local_nz + 2, local_ny + 2, local_nx + 2)
 
     # Initialize tensors
     values_u = torch.zeros(local_shape, device=device)
@@ -110,9 +119,9 @@ def train(rank, world_size, local_rank,nlevel, ratio_x, ratio_y):
     # Otimização do Sigma (Vetorizado)
     sigma = torch.zeros(local_shape, dtype=torch.float32, device=device)
     if LIBM == True:
-        z_coords = (torch.arange(local_nz, device=device).float() + z_start) * dz
-        y_coords = torch.arange(ny, device=device).float() * dy
-        x_coords = torch.arange(nx, device=device).float() * dx
+        z_coords = (torch.arange(local_nz, device=device).float() * dz) + z_start_val
+        y_coords = (torch.arange(local_ny, device=device).float() * dy) + y_start_val
+        x_coords = (torch.arange(local_nx, device=device).float() * dx) + x_start_val
         Z, Y, X = torch.meshgrid(z_coords, y_coords, x_coords, indexing='ij')
         dist = ((X - 2)**2 + (Y - 2)**2 + (Z - 2)**2)**0.5
         sigma[0, 0, dist <= 0.5] = 1e08
@@ -161,7 +170,15 @@ def save_results(u, v, w, p, itime, rank):
     global_p = gather_all_data(p)
 
     if rank == 0:
+        save_path = 'FPS'
+        os.makedirs(save_path, exist_ok=True)
+
         print(f"Saving step {itime}")
+        np.save(save_path+"/w"+str(itime), arr=global_w.numpy()[0,0,:,:])
+        np.save(save_path+"/v"+str(itime), arr=global_v.numpy()[0,0,:,:])
+        np.save(save_path+"/u"+str(itime), arr=global_u.numpy()[0,0,:,:])
+        np.save(save_path+"/p"+str(itime), arr=global_p.numpy()[0,0,:,:])
+
         try:
             z_slice = global_u.shape[2] // 2
             u_plot = global_u.numpy()[0, 0, z_slice, :, :]
