@@ -119,7 +119,7 @@ class AI4Urban(nn.Module):
         k_w = 0.5 * (k_w * self.diff(values_ww) + self.diff(values_ww * k_ww) - values_w * self.diff(k_ww))
         return k_u, k_v, k_w
 
-    def forward(self, rank, world_size, values_u, values_uu, values_v, values_vv, values_w, values_ww, values_p, values_pp, b_uu, b_vv, b_ww, k1, dt, iteration, k_uu, k_vv, k_ww, sigma, neighbors):
+    def forward(self, rank, world_size, values_u, values_uu, values_v, values_vv, values_w, values_ww, values_p, values_pp, b_uu, b_vv, b_ww, k1, dt, iteration, k_uu, k_vv, k_ww, sigma, nlevel, ratio_x, ratio_y, neighbors):
         if True: [values_u, values_v, values_w] = self.solid_body(values_u, values_v, values_w, sigma, dt)
 
         # 1. Apply BCs
