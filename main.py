@@ -153,7 +153,7 @@ def train(rank, world_size, local_rank,nlevel, ratio_x, ratio_y):
 
             # Outputs
             if save_fig(itime, n_out):
-                save_results(values_u, values_v, values_w, values_p, itime, rank)
+                save_local_results(values_u, values_v, values_w, values_p, itime, rank)
 
     end = time.time()
     if rank == 0:
@@ -162,7 +162,17 @@ def train(rank, world_size, local_rank,nlevel, ratio_x, ratio_y):
 def save_fig(itime, n_out):
     return SAVE and itime % n_out == 0
 
-def save_results(u, v, w, p, itime, rank):
+def save_local_results(u, v, w, p, itime, rank):
+    save_path = 'FPS'
+    os.makedirs(save_path, exist_ok=True)
+    np.save(save_path+"/u"+str(rank)+'_'+str(itime+0), arr=u.cpu().detach().numpy())
+    np.save(save_path+"/v"+str(rank)+'_'+str(itime+0), arr=v.cpu().detach().numpy())
+    np.save(save_path+"/w"+str(rank)+'_'+str(itime+0), arr=w.cpu().detach().numpy())
+    np.save(save_path+"/p"+str(rank)+'_'+str(itime+0), arr=p.cpu().detach().numpy())
+
+
+
+def gather_and_save_results(u, v, w, p, itime, rank):
     # Função auxiliar para salvar resultados
     global_u = gather_all_data(u)
     global_v = gather_all_data(v)
