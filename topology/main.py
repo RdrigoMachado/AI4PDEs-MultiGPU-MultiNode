@@ -8,6 +8,7 @@ import numpy as np
 import torch
 import torch.distributed as distributed
 
+import halo_exchange as halo_exchange_mod
 from halo_exchange import Topology, gather_all_data, init_process
 from solver import AI4Urban, wA
 
@@ -21,7 +22,7 @@ Re = 0.001
 dt = 0.01
 ub = -1.0
 iteration = 10
-ntime = 40
+ntime = 40  # default; pode ser sobrescrito via --steps
 n_out = 10
 LIBM = True
 diag = wA[0, 0, 1, 1, 1].item()
@@ -203,8 +204,24 @@ if __name__ == "__main__":
         choices=["1d-x", "1d-y", "1d-z", "3d"],
         help="Estratégia de divisão da malha (Decomposition Topology)",
     )
+    parser.add_argument(
+        "--halo-strategy",
+        type=str,
+        default="blocking",
+        choices=["blocking", "async_a", "async_b"],
+        help="Halo exchange: blocking (baseline), async_a (isend/irecv per-axis), "
+             "async_b (batch_isend_irecv)",
+    )
+    parser.add_argument(
+        "--steps",
+        type=int,
+        default=ntime,
+        help=f"Número de timesteps (default: {ntime})",
+    )
 
     args, unknown = parser.parse_known_args()
+    halo_exchange_mod.set_strategy(args.halo_strategy)
+    ntime = args.steps
 
     nx = args.nx
     ny = args.ny
@@ -228,6 +245,7 @@ if __name__ == "__main__":
                 f"Local shape on node: {topo.local_nx}x{topo.local_ny}x{topo.local_nz}"
             )
             print(f"Max Multigrid Levels: {nlevel}")
+            print(f"Halo strategy: {args.halo_strategy}")
             print("=============================================")
 
         train(topo, local_rank, nlevel)

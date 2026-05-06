@@ -3,6 +3,22 @@ import os
 import torch
 import torch.distributed as dist
 
+# Halo-exchange strategy selection. Default mantém o comportamento original
+# (síncrono/bloqueante). main.py altera via set_strategy() conforme CLI.
+_STRATEGY = "blocking"
+_VALID_STRATEGIES = ("blocking", "async_a", "async_b")
+
+
+def set_strategy(name):
+    global _STRATEGY
+    if name not in _VALID_STRATEGIES:
+        raise ValueError(f"Unknown halo strategy: {name!r}. Valid: {_VALID_STRATEGIES}")
+    _STRATEGY = name
+
+
+def get_strategy():
+    return _STRATEGY
+
 
 class Topology:
     def __init__(self, decomp_type, rank, world_size, nx, ny, nz):
@@ -123,6 +139,24 @@ def gather_all_data(local_tensor, topo):
 
 
 def halo_exchange(tensor, topo):
+    """Dispatcher de halo exchange. Roteia para a implementação ativa.
+
+    A estratégia é selecionada via `set_strategy()` (default: 'blocking').
+    Solver.py importa esta função uma única vez; o dispatch dinâmico aqui
+    permite trocar a estratégia em runtime sem reimport.
+    """
+    if _STRATEGY == "blocking":
+        return _halo_exchange_blocking(tensor, topo)
+    if _STRATEGY == "async_a":
+        from halo_exchange_async_a import halo_exchange_async_a
+        return halo_exchange_async_a(tensor, topo)
+    if _STRATEGY == "async_b":
+        from halo_exchange_async_b import halo_exchange_async_b
+        return halo_exchange_async_b(tensor, topo)
+    raise RuntimeError(f"Invalid halo strategy: {_STRATEGY!r}")
+
+
+def _halo_exchange_blocking(tensor, topo):
     if topo.world_size == 1:
         return tensor
 
