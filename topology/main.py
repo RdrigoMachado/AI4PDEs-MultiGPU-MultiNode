@@ -230,9 +230,8 @@ if __name__ == "__main__":
         "--halo-strategy",
         type=str,
         default="blocking",
-        choices=["blocking", "async_a", "async_b"],
-        help="Halo exchange: blocking (baseline), async_a (isend/irecv per-axis), "
-             "async_b (batch_isend_irecv)",
+        choices=["blocking", "async_b"],
+        help="Halo exchange: blocking (baseline), async_b (batch_isend_irecv).",
     )
     parser.add_argument(
         "--steps",

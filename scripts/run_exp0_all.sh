@@ -27,7 +27,7 @@ TOPOLOGY=${TOPOLOGY:-3d}
 SAVE_FLAG=${SAVE_FLAG:-1}
 STEPS=${STEPS:-20}
 N_RUNS=${N_RUNS:-5}
-STRATEGIES=${STRATEGIES:-"blocking async_a async_b"}
+STRATEGIES=${STRATEGIES:-"blocking async_b"}
 PROFILE=${PROFILE:-0}     # 1 ativa profiler (sync por região; ~0.5% overhead)
 PARTITION=${PARTITION:-sequana_gpu_dev}
 

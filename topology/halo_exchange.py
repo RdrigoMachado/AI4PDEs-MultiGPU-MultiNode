@@ -6,7 +6,11 @@ import torch.distributed as dist
 # Halo-exchange strategy selection. Default mantém o comportamento original
 # (síncrono/bloqueante). main.py altera via set_strategy() conforme CLI.
 _STRATEGY = "blocking"
-_VALID_STRATEGIES = ("blocking", "async_a", "async_b")
+# async_a (isend/irecv per-axis solto) foi removido após validação no Exp 0:
+# NCCL 2.27.5 eager-init trata isend/irecv não-batched como coletivas
+# independentes serializadas, causando deadlock determinístico (cada rank
+# posta isend antes de qualquer irecv). Solução canônica: batch_isend_irecv.
+_VALID_STRATEGIES = ("blocking", "async_b")
 
 
 def set_strategy(name):
@@ -149,9 +153,6 @@ def halo_exchange(tensor, topo):
     with profiler.region("halo_total"):
         if _STRATEGY == "blocking":
             return _halo_exchange_blocking(tensor, topo)
-        if _STRATEGY == "async_a":
-            from halo_exchange_async_a import halo_exchange_async_a
-            return halo_exchange_async_a(tensor, topo)
         if _STRATEGY == "async_b":
             from halo_exchange_async_b import halo_exchange_async_b
             return halo_exchange_async_b(tensor, topo)
