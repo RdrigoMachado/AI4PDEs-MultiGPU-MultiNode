@@ -10,6 +10,7 @@ import torch.distributed as distributed
 
 import halo_exchange as halo_exchange_mod
 from halo_exchange import Topology, gather_all_data, init_process
+from profiling import profiler
 from solver import AI4Urban, wA
 
 # # # ################################### # # #
@@ -102,6 +103,7 @@ def train(topo, local_rank, nlevel):
             if topo.rank == 0 and DEBUG_PRINTS:
                 print(f"Step {itime}/{ntime}")
 
+            profiler.start("step_total")
             [values_u, values_v, values_w, values_p, w, r] = model(
                 topo,
                 local_rank,
@@ -131,6 +133,7 @@ def train(topo, local_rank, nlevel):
             # Outputs (Unificados)
             if SAVE and itime % n_out == 0:
                 start_save = time.time()
+                profiler.start("io_save")
 
                 global_u = gather_all_data(values_u, topo)
                 global_v = gather_all_data(values_v, topo)
@@ -168,13 +171,32 @@ def train(topo, local_rank, nlevel):
                     except Exception as e:
                         print(f"Erro salvando Plot: {e}")
 
+                profiler.end("io_save")
                 save_time_accumulator += time.time() - start_save
+            profiler.end("step_total")
 
     end = time.time()
 
     if topo.rank == 0:
         print(f"\nExecution_time,{end - start:.2f}s")
         print(f"\nSave_time,{save_time_accumulator:.2f}s")
+
+    if profiler.enabled:
+        profile_path = f"profile_rank{topo.rank:02d}.csv"
+        profiler.dump_csv(
+            profile_path,
+            extra_cols={
+                "rank": topo.rank,
+                "world_size": topo.world_size,
+                "topology": topo.decomp_type,
+                "halo_strategy": halo_exchange_mod.get_strategy(),
+                "nx": topo.local_nx * topo.PX,
+                "ny": topo.local_ny * topo.PY,
+                "nz": topo.local_nz * topo.PZ,
+            },
+        )
+        if topo.rank == 0:
+            print(f"\nProfile dumped: {profile_path} (per rank)")
 
 
 if __name__ == "__main__":
@@ -218,10 +240,27 @@ if __name__ == "__main__":
         default=ntime,
         help=f"Número de timesteps (default: {ntime})",
     )
+    parser.add_argument(
+        "--profile",
+        type=int,
+        default=0,
+        choices=[0, 1],
+        help="Habilita profiler com torch.cuda.synchronize() por região "
+             "(default 0; tem ~0.5%% overhead por causa do sync)",
+    )
+    parser.add_argument(
+        "--profile-nvtx",
+        type=int,
+        default=0,
+        choices=[0, 1],
+        help="Adiciona NVTX ranges para visualização em nsys (requer --profile=1)",
+    )
 
     args, unknown = parser.parse_known_args()
     halo_exchange_mod.set_strategy(args.halo_strategy)
     ntime = args.steps
+    if args.profile:
+        profiler.enable(sync=True, use_nvtx=bool(args.profile_nvtx))
 
     nx = args.nx
     ny = args.ny
@@ -246,6 +285,8 @@ if __name__ == "__main__":
             )
             print(f"Max Multigrid Levels: {nlevel}")
             print(f"Halo strategy: {args.halo_strategy}")
+            print(f"Profile: {'on' if args.profile else 'off'}"
+                  f"{' (+NVTX)' if args.profile and args.profile_nvtx else ''}")
             print("=============================================")
 
         train(topo, local_rank, nlevel)

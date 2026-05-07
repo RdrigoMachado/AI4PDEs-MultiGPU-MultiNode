@@ -45,6 +45,7 @@ TOPOLOGY=$6
 SAVE_FLAG=$7
 HALO_STRATEGY=$8
 STEPS=$9
+PROFILE=${10:-0}
 
 SCRATCH_DIR="/scratch/g-assimila/rodrigo.machado2"
 TOPO_DIR="${SCRATCH_DIR}/AI4PDEs-MultiGPU-MultiNode/topology"
@@ -71,7 +72,8 @@ srun python3 -m torch.distributed.run \
     --nx $NX --ny $NY --nz $NZ \
     --topology $TOPOLOGY \
     --halo-strategy $HALO_STRATEGY \
-    --steps $STEPS
+    --steps $STEPS \
+    --profile $PROFILE
 SRUN_RC=$?
 set -e
 

@@ -28,6 +28,7 @@ SAVE_FLAG=${SAVE_FLAG:-1}
 STEPS=${STEPS:-20}
 N_RUNS=${N_RUNS:-5}
 STRATEGIES=${STRATEGIES:-"blocking async_a async_b"}
+PROFILE=${PROFILE:-0}     # 1 ativa profiler (sync por região; ~0.5% overhead)
 PARTITION=${PARTITION:-sequana_gpu_dev}
 
 # CSV: cria header só se vazio/ausente (preserva linhas de runs anteriores).
@@ -44,6 +45,7 @@ echo "  Steps:      ${STEPS}"
 echo "  Save:       ${SAVE_FLAG}"
 echo "  Runs/strat: ${N_RUNS}"
 echo "  Strategies: ${STRATEGIES}"
+echo "  Profile:    ${PROFILE}"
 echo "  Partition:  ${PARTITION}"
 echo "  CSV:        ${CSV_FILE}"
 echo "  Run logs:   ${LOGS_DIR}/exp0_*.{out,err}"
@@ -85,7 +87,7 @@ for STRATEGY in ${STRATEGIES}; do
             attempts=$((attempts + 1))
             if sbatch --wait "${SCRIPT_DIR}/run_exp0.sbatch" \
                     "${NX}" "${NY}" "${NZ}" "${RUN}" "${CSV_FILE}" \
-                    "${TOPOLOGY}" "${SAVE_FLAG}" "${STRATEGY}" "${STEPS}"; then
+                    "${TOPOLOGY}" "${SAVE_FLAG}" "${STRATEGY}" "${STEPS}" "${PROFILE}"; then
                 break
             fi
             rc=$?

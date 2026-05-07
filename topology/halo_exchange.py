@@ -145,23 +145,27 @@ def halo_exchange(tensor, topo):
     Solver.py importa esta função uma única vez; o dispatch dinâmico aqui
     permite trocar a estratégia em runtime sem reimport.
     """
-    if _STRATEGY == "blocking":
-        return _halo_exchange_blocking(tensor, topo)
-    if _STRATEGY == "async_a":
-        from halo_exchange_async_a import halo_exchange_async_a
-        return halo_exchange_async_a(tensor, topo)
-    if _STRATEGY == "async_b":
-        from halo_exchange_async_b import halo_exchange_async_b
-        return halo_exchange_async_b(tensor, topo)
-    raise RuntimeError(f"Invalid halo strategy: {_STRATEGY!r}")
+    from profiling import profiler
+    with profiler.region("halo_total"):
+        if _STRATEGY == "blocking":
+            return _halo_exchange_blocking(tensor, topo)
+        if _STRATEGY == "async_a":
+            from halo_exchange_async_a import halo_exchange_async_a
+            return halo_exchange_async_a(tensor, topo)
+        if _STRATEGY == "async_b":
+            from halo_exchange_async_b import halo_exchange_async_b
+            return halo_exchange_async_b(tensor, topo)
+        raise RuntimeError(f"Invalid halo strategy: {_STRATEGY!r}")
 
 
 def _halo_exchange_blocking(tensor, topo):
+    from profiling import profiler
     if topo.world_size == 1:
         return tensor
 
     # ======================= AXIS X =======================
     if topo.PX > 1:
+        profiler.start("halo_X")
         is_even_x = topo.px % 2 == 0
         # Passo 1
         if is_even_x and topo.neighbors["right"] != -1:
@@ -185,9 +189,11 @@ def _halo_exchange_blocking(tensor, topo):
             dist.recv(rb, src=topo.neighbors["left"])
             tensor[..., 0] = rb
             dist.send(tensor[..., 1].contiguous(), dst=topo.neighbors["left"])
+        profiler.end("halo_X")
 
     # ======================= AXIS Y =======================
     if topo.PY > 1:
+        profiler.start("halo_Y")
         is_even_y = topo.py % 2 == 0
         # Passo 1
         if is_even_y and topo.neighbors["bottom"] != -1:
@@ -211,11 +217,13 @@ def _halo_exchange_blocking(tensor, topo):
             dist.recv(rb, src=topo.neighbors["top"])
             tensor[..., 0, :] = rb
             dist.send(tensor[..., 1, :].contiguous(), dst=topo.neighbors["top"])
+        profiler.end("halo_Y")
 
     # ======================= AXIS Z =======================
     if topo.PZ > 1:
         is_even_z = topo.pz % 2 == 0
         # Passo 1
+        profiler.start("halo_Z_phase1")
         if is_even_z and topo.neighbors["front"] != -1:
             dist.send(tensor[..., -2, :, :].contiguous(), dst=topo.neighbors["front"])
             rb = torch.empty_like(tensor[..., -1, :, :]).contiguous()
@@ -226,7 +234,9 @@ def _halo_exchange_blocking(tensor, topo):
             dist.recv(rb, src=topo.neighbors["back"])
             tensor[..., 0, :, :] = rb
             dist.send(tensor[..., 1, :, :].contiguous(), dst=topo.neighbors["back"])
+        profiler.end("halo_Z_phase1")
         # Passo 2
+        profiler.start("halo_Z_phase2")
         if not is_even_z and topo.neighbors["front"] != -1:
             dist.send(tensor[..., -2, :, :].contiguous(), dst=topo.neighbors["front"])
             rb = torch.empty_like(tensor[..., -1, :, :]).contiguous()
@@ -237,5 +247,6 @@ def _halo_exchange_blocking(tensor, topo):
             dist.recv(rb, src=topo.neighbors["back"])
             tensor[..., 0, :, :] = rb
             dist.send(tensor[..., 1, :, :].contiguous(), dst=topo.neighbors["back"])
+        profiler.end("halo_Z_phase2")
 
     return tensor

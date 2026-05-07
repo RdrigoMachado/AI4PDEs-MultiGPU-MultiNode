@@ -13,11 +13,13 @@ import torch.distributed as dist
 
 
 def halo_exchange_async_a(tensor, topo):
+    from profiling import profiler
     if topo.world_size == 1:
         return tensor
 
     # ======================= AXIS X =======================
     if topo.PX > 1:
+        profiler.start("halo_X")
         is_even_x = topo.px % 2 == 0
         # Sub-fase 1: par px <-> par+1 (right side of par; left side of ímpar)
         if is_even_x and topo.neighbors["right"] != -1:
@@ -54,9 +56,11 @@ def halo_exchange_async_a(tensor, topo):
             req_s.wait()
             req_r.wait()
             tensor[..., 0] = recv_buf
+        profiler.end("halo_X")
 
     # ======================= AXIS Y =======================
     if topo.PY > 1:
+        profiler.start("halo_Y")
         is_even_y = topo.py % 2 == 0
         if is_even_y and topo.neighbors["bottom"] != -1:
             send_buf = tensor[..., -2, :].contiguous()
@@ -91,10 +95,12 @@ def halo_exchange_async_a(tensor, topo):
             req_s.wait()
             req_r.wait()
             tensor[..., 0, :] = recv_buf
+        profiler.end("halo_Y")
 
     # ======================= AXIS Z =======================
     if topo.PZ > 1:
         is_even_z = topo.pz % 2 == 0
+        profiler.start("halo_Z_phase1")
         if is_even_z and topo.neighbors["front"] != -1:
             send_buf = tensor[..., -2, :, :].contiguous()
             recv_buf = torch.empty_like(tensor[..., -1, :, :])
@@ -111,7 +117,9 @@ def halo_exchange_async_a(tensor, topo):
             req_s.wait()
             req_r.wait()
             tensor[..., 0, :, :] = recv_buf
+        profiler.end("halo_Z_phase1")
 
+        profiler.start("halo_Z_phase2")
         if (not is_even_z) and topo.neighbors["front"] != -1:
             send_buf = tensor[..., -2, :, :].contiguous()
             recv_buf = torch.empty_like(tensor[..., -1, :, :])
@@ -128,5 +136,6 @@ def halo_exchange_async_a(tensor, topo):
             req_s.wait()
             req_r.wait()
             tensor[..., 0, :, :] = recv_buf
+        profiler.end("halo_Z_phase2")
 
     return tensor
