@@ -20,6 +20,10 @@ REF_STRATEGY=${REF_STRATEGY:-blocking}
 TEST_STRATEGY=${TEST_STRATEGY:-async_b}
 RTOL=${RTOL:-1e-5}
 ATOL=${ATOL:-1e-5}
+# Halo comm é determinística: 1 par valida correção. Múltiplos runs servem
+# só para variância de tempo (CSV, barato). Set ALL_PAIRS=1 para forçar
+# comparação de todos os pares (lento; ~50GB Lustre por par).
+ALL_PAIRS=${ALL_PAIRS:-0}
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPARE="${REPO_DIR}/tools/compare_halo_outputs.py"
@@ -53,10 +57,17 @@ for d in "${RUNS_DIR}"/*/; do
 done
 
 # -----------------------------------------------------------------
-# Validação numérica par-a-par
+# Validação numérica
+#   - default: 1 par (halo é determinística; runs duplicados redundantes)
+#   - ALL_PAIRS=1: todos os pares (lento; debug)
 # -----------------------------------------------------------------
 echo
-echo "--- Validação numérica: ${REF_STRATEGY} vs ${TEST_STRATEGY} ---"
+if [ "${ALL_PAIRS}" = "1" ]; then
+    echo "--- Validação numérica (TODOS os pares — ALL_PAIRS=1) ---"
+else
+    echo "--- Validação numérica (1 par; ALL_PAIRS=1 para todos) ---"
+fi
+
 n_pass=0
 n_fail=0
 n_skip=0
@@ -67,12 +78,10 @@ for ref_dir in "${RUNS_DIR}/${REF_STRATEGY}_r"*; do
 
     test_dir=$(ls -d "${RUNS_DIR}/${TEST_STRATEGY}_r${run_id}_"* 2>/dev/null | tail -1)
     if [ -z "${test_dir}" ]; then
-        echo "  run ${run_id}: SEM PAR (${TEST_STRATEGY}_r${run_id}_*)"
         n_skip=$((n_skip + 1))
         continue
     fi
     if [ ! -d "${ref_dir}/FPS" ] || [ ! -d "${test_dir}/FPS" ]; then
-        echo "  run ${run_id}: FPS ausente"
         n_skip=$((n_skip + 1))
         continue
     fi
@@ -86,6 +95,10 @@ for ref_dir in "${RUNS_DIR}/${REF_STRATEGY}_r"*; do
         n_pass=$((n_pass + 1))
     else
         n_fail=$((n_fail + 1))
+    fi
+
+    if [ "${ALL_PAIRS}" != "1" ]; then
+        break
     fi
 done
 
