@@ -223,7 +223,7 @@ class AI4Urban(nn.Module):
         ub,
         Re,
     ):
-        profiler.start("predictor")
+        profiler.push_stage("predictor")
         if True:
             [values_u, values_v, values_w] = self.solid_body(
                 values_u, values_v, values_w, sigma, dt
@@ -290,9 +290,9 @@ class AI4Urban(nn.Module):
             )
             - self.zadv(values_pp) * dt
         )
-        profiler.end("predictor")
+        profiler.pop_stage("predictor")
 
-        profiler.start("corrector")
+        profiler.push_stage("corrector")
         if True:
             [b_u, b_v, b_w] = self.solid_body(b_u, b_v, b_w, sigma, dt)
 
@@ -332,9 +332,9 @@ class AI4Urban(nn.Module):
             - b_w * self.zadv(b_ww) * dt
             - self.zadv(values_pp) * dt
         )
-        profiler.end("corrector")
+        profiler.pop_stage("corrector")
 
-        profiler.start("pre_pressure")
+        profiler.push_stage("pre_pressure")
         if True:
             [values_u, values_v, values_w] = self.solid_body(
                 values_u, values_v, values_w, sigma, dt
@@ -348,9 +348,9 @@ class AI4Urban(nn.Module):
         values_uu = halo_exchange(values_uu, topo)
         values_vv = halo_exchange(values_vv, topo)
         values_ww = halo_exchange(values_ww, topo)
-        profiler.end("pre_pressure")
+        profiler.pop_stage("pre_pressure")
 
-        profiler.start("multigrid")
+        profiler.push_stage("multigrid")
         [values_p, w, r] = self.F_cycle_MG(
             topo,
             local_rank,
@@ -364,9 +364,9 @@ class AI4Urban(nn.Module):
             dt,
             nlevel,
         )
-        profiler.end("multigrid")
+        profiler.pop_stage("multigrid")
 
-        profiler.start("post_pressure")
+        profiler.push_stage("post_pressure")
         values_pp = apply_BC_p(values_p, values_pp, topo)
         values_pp = halo_exchange(values_pp, topo)
 
@@ -378,5 +378,5 @@ class AI4Urban(nn.Module):
             [values_u, values_v, values_w] = self.solid_body(
                 values_u, values_v, values_w, sigma, dt
             )
-        profiler.end("post_pressure")
+        profiler.pop_stage("post_pressure")
         return values_u, values_v, values_w, values_p, w, r

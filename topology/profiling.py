@@ -42,6 +42,10 @@ class Profiler:
         self.use_nvtx = False
         self._stats = OrderedDict()  # name -> {"count": int, "time": float}
         self._open = {}  # name -> start_t (para start/end)
+        # Pilha de estágios atualmente abertos (push_stage/pop_stage).
+        # Permite atribuir tempo de halo ao estágio onde ocorreu:
+        # halo_total dentro de "multigrid" também acumula em halo_in_multigrid.
+        self._stage_stack = []
 
     def enable(self, sync=True, use_nvtx=False):
         self.enabled = True
@@ -54,6 +58,7 @@ class Profiler:
     def reset(self):
         self._stats.clear()
         self._open.clear()
+        self._stage_stack.clear()
 
     def _sync(self):
         if self.sync and torch.cuda.is_available():
@@ -83,7 +88,13 @@ class Profiler:
             t1 = time.perf_counter()
             if self.use_nvtx:
                 _nvtx.range_pop()
-            self._record(name, t1 - t0)
+            dt = t1 - t0
+            self._record(name, dt)
+            # Atribui o tempo desta região ao estágio em que ela ocorreu.
+            # Útil para halo_total dentro de multigrid/predictor/etc:
+            # gera a contrapartida halo_in_<estagio>.
+            if name == "halo_total" and self._stage_stack:
+                self._record(f"halo_in_{self._stage_stack[-1]}", dt)
 
     def start(self, name):
         if not self.enabled:
@@ -104,6 +115,25 @@ class Profiler:
             _nvtx.range_pop()
         dt = t1 - self._open.pop(name)
         self._record(name, dt)
+
+    def push_stage(self, name):
+        """Como start(), mas também empilha o estágio para atribuição de halos.
+
+        Halos chamados dentro do bloco também acumulam em halo_in_<name>.
+        Use este par para os 5 estágios do forward (predictor, corrector,
+        pre_pressure, multigrid, post_pressure).
+        """
+        if not self.enabled:
+            return
+        self.start(name)
+        self._stage_stack.append(name)
+
+    def pop_stage(self, name):
+        if not self.enabled:
+            return
+        self.end(name)
+        if self._stage_stack and self._stage_stack[-1] == name:
+            self._stage_stack.pop()
 
     def report(self):
         out = []
