@@ -17,7 +17,6 @@
 #SBATCH -J ai4pde_profile
 #SBATCH -o /scratch/g-assimila/rodrigo.machado2/logs_comm/profile_%j.out
 #SBATCH -e /scratch/g-assimila/rodrigo.machado2/logs_comm/profile_%j.err
-#SBATCH --exclude=sdumont8082
 
 set -e
 module load python/3.10.16_sequana
