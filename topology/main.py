@@ -95,6 +95,15 @@ def train(topo, local_rank, nlevel):
 
     model = AI4Urban().to(device)
 
+    # Reset peak memory após alocar todos os tensores estáticos e o modelo.
+    # Mede o pico atribuível ao train loop (multigrid temps, cudnn workspace,
+    # buffers NCCL), não ao setup.
+    if profiler.enabled and torch.cuda.is_available():
+        profiler.record_metric(
+            "mem_static_alloc_gb", torch.cuda.memory_allocated() / 1e9
+        )
+        torch.cuda.reset_peak_memory_stats()
+
     save_time_accumulator = 0.0
     start = time.time()
 
@@ -182,21 +191,30 @@ def train(topo, local_rank, nlevel):
         print(f"\nSave_time,{save_time_accumulator:.2f}s")
 
     if profiler.enabled:
+        if torch.cuda.is_available():
+            profiler.record_metric(
+                "mem_peak_alloc_gb", torch.cuda.max_memory_allocated() / 1e9
+            )
+            profiler.record_metric(
+                "mem_peak_reserved_gb", torch.cuda.max_memory_reserved() / 1e9
+            )
+
+        extra_cols = {
+            "rank": topo.rank,
+            "world_size": topo.world_size,
+            "topology": topo.decomp_type,
+            "halo_strategy": halo_exchange_mod.get_strategy(),
+            "nx": topo.local_nx * topo.PX,
+            "ny": topo.local_ny * topo.PY,
+            "nz": topo.local_nz * topo.PZ,
+        }
         profile_path = f"profile_rank{topo.rank:02d}.csv"
-        profiler.dump_csv(
-            profile_path,
-            extra_cols={
-                "rank": topo.rank,
-                "world_size": topo.world_size,
-                "topology": topo.decomp_type,
-                "halo_strategy": halo_exchange_mod.get_strategy(),
-                "nx": topo.local_nx * topo.PX,
-                "ny": topo.local_ny * topo.PY,
-                "nz": topo.local_nz * topo.PZ,
-            },
-        )
+        profiler.dump_csv(profile_path, extra_cols=extra_cols)
+        metrics_path = f"metrics_rank{topo.rank:02d}.csv"
+        profiler.dump_metrics_csv(metrics_path, extra_cols=extra_cols)
         if topo.rank == 0:
             print(f"\nProfile dumped: {profile_path} (per rank)")
+            print(f"Metrics dumped: {metrics_path} (per rank)")
 
 
 if __name__ == "__main__":

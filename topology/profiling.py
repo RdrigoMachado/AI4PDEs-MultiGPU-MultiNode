@@ -46,6 +46,10 @@ class Profiler:
         # Permite atribuir tempo de halo ao estágio onde ocorreu:
         # halo_total dentro de "multigrid" também acumula em halo_in_multigrid.
         self._stage_stack = []
+        # Métricas pontuais (não-temporais): pico de memória, bytes movidos
+        # por região, etc. Vão num CSV separado para não poluir o agregador
+        # de tempo.
+        self._metrics = OrderedDict()  # name -> value (float)
 
     def enable(self, sync=True, use_nvtx=False):
         self.enabled = True
@@ -59,6 +63,13 @@ class Profiler:
         self._stats.clear()
         self._open.clear()
         self._stage_stack.clear()
+        self._metrics.clear()
+
+    def record_metric(self, name, value):
+        """Registra um valor pontual. Sobrescreve se já existir."""
+        if not self.enabled:
+            return
+        self._metrics[name] = float(value)
 
     def _sync(self):
         if self.sync and torch.cuda.is_available():
@@ -157,6 +168,20 @@ class Profiler:
                     list(extra.values())
                     + [name, count, f"{total_s:.6f}", f"{mean_s * 1e6:.3f}"]
                 )
+
+    def dump_metrics_csv(self, path, extra_cols=None):
+        """Dump das métricas pontuais (record_metric) em CSV separado."""
+        if not self._metrics:
+            return
+        extra = dict(extra_cols or {})
+        d = os.path.dirname(path)
+        if d:
+            os.makedirs(d, exist_ok=True)
+        with open(path, "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(list(extra.keys()) + ["metric", "value"])
+            for name, value in self._metrics.items():
+                w.writerow(list(extra.values()) + [name, f"{value:.6f}"])
 
 
 profiler = Profiler()
