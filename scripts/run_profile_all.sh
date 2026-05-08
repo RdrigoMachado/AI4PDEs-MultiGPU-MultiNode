@@ -26,12 +26,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 mkdir -p "${LOGS_DIR}/profile_runs"
 
-# Matriz weak scaling — volume por GPU constante (~268M cells).
+# Matriz weak scaling — volume por GPU constante (~201M cells).
+# 1024 cubed deu OOM em V100 32GB (pico real ~30GB / multigrid temps + cudnn
+# workspace). 1024x768x1024 fica em ~71% mem; mesma matriz do Exp 0.
 # Formato por linha: "NODES NX NY NZ"
 MATRIX=${MATRIX:-"
-1 1024 1024 1024
-2 2048 1024 1024
-4 4096 1024 1024
+1 1024 768 1024
+2 2048 768 1024
+4 4096 768 1024
 "}
 TOPOLOGY=${TOPOLOGY:-3d}
 STEPS=${STEPS:-20}
