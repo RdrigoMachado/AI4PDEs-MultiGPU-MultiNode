@@ -53,14 +53,14 @@ NTASKS=$((SLURM_JOB_NUM_NODES * SLURM_NTASKS_PER_NODE))
 
 # sendrecv_perf — para α/β do canal P2P (caso de halo do solver)
 echo "=== sendrecv_perf ===" | tee sendrecv.txt
-srun --ntasks=$NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE \
+srun --mpi=pmix --ntasks=$NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE \
     "${NCCL_TESTS_DIR}/build/sendrecv_perf" \
     -b 1K -e 256M -f 2 -g 1 -w 5 -n 20 -c 0 \
     2>&1 | tee -a sendrecv.txt
 
 # all_reduce_perf — sanity / referência adicional para o modelo
 echo "=== all_reduce_perf ===" | tee allreduce.txt
-srun --ntasks=$NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE \
+srun --mpi=pmix --ntasks=$NTASKS --ntasks-per-node=$SLURM_NTASKS_PER_NODE \
     "${NCCL_TESTS_DIR}/build/all_reduce_perf" \
     -b 1K -e 256M -f 2 -g 1 -w 5 -n 20 -c 0 \
     2>&1 | tee -a allreduce.txt
