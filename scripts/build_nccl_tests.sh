@@ -38,19 +38,17 @@ if [ ! -f "$NCCL_HOME/include/nccl.h" ]; then
     exit 1
 fi
 
-# Wheels nvidia-nccl-cu12 empacotam só libnccl.so.2.x.x — criar symlinks
-# que o Makefile do nccl-tests espera (-lnccl exige libnccl.so).
-NCCL_REAL_LIB=$(ls "$NCCL_HOME"/lib/libnccl.so.*.* 2>/dev/null | head -1)
+# Wheel nvidia-nccl-cu12 traz só libnccl.so.2 (sem libnccl.so).
+# Makefile do nccl-tests linka com -lnccl, que exige libnccl.so.
+NCCL_REAL_LIB=$(ls "$NCCL_HOME"/lib/libnccl.so.* 2>/dev/null | head -1)
 if [ -z "$NCCL_REAL_LIB" ]; then
     echo "ERRO: libnccl.so.* não encontrada em $NCCL_HOME/lib/" >&2
     ls -la "$NCCL_HOME/lib" || true
     exit 1
 fi
 NCCL_REAL_BASENAME=$(basename "$NCCL_REAL_LIB")
-NCCL_MAJOR_BASENAME=$(echo "$NCCL_REAL_BASENAME" | sed -E 's/(libnccl\.so\.[0-9]+).*/\1/')
-[ -e "$NCCL_HOME/lib/libnccl.so" ]              || ln -s "$NCCL_REAL_BASENAME"  "$NCCL_HOME/lib/libnccl.so"
-[ -e "$NCCL_HOME/lib/$NCCL_MAJOR_BASENAME" ]    || ln -s "$NCCL_REAL_BASENAME"  "$NCCL_HOME/lib/$NCCL_MAJOR_BASENAME"
-echo "NCCL lib: $NCCL_REAL_BASENAME (+ symlinks libnccl.so, $NCCL_MAJOR_BASENAME)"
+[ -e "$NCCL_HOME/lib/libnccl.so" ] || ln -s "$NCCL_REAL_BASENAME" "$NCCL_HOME/lib/libnccl.so"
+echo "NCCL lib: $NCCL_REAL_BASENAME (+ symlink libnccl.so)"
 
 # --- CUDA / MPI homes ------------------------------------------------------
 CUDA_HOME=${CUDA_HOME:-${CUDA_DIR:-}}
