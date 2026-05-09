@@ -32,11 +32,25 @@ NCCL_HOME=$(python3 -c "
 import nvidia.nccl as n
 print(n.__path__[0])
 ")
-if [ ! -f "$NCCL_HOME/include/nccl.h" ] || [ ! -f "$NCCL_HOME/lib/libnccl.so" ]; then
-    echo "ERRO: NCCL incompleto em $NCCL_HOME (faltando include/nccl.h ou lib/libnccl.so)" >&2
-    ls -la "$NCCL_HOME" || true
+if [ ! -f "$NCCL_HOME/include/nccl.h" ]; then
+    echo "ERRO: nccl.h não encontrado em $NCCL_HOME/include/" >&2
+    ls -la "$NCCL_HOME/include" || true
     exit 1
 fi
+
+# Wheels nvidia-nccl-cu12 empacotam só libnccl.so.2.x.x — criar symlinks
+# que o Makefile do nccl-tests espera (-lnccl exige libnccl.so).
+NCCL_REAL_LIB=$(ls "$NCCL_HOME"/lib/libnccl.so.*.* 2>/dev/null | head -1)
+if [ -z "$NCCL_REAL_LIB" ]; then
+    echo "ERRO: libnccl.so.* não encontrada em $NCCL_HOME/lib/" >&2
+    ls -la "$NCCL_HOME/lib" || true
+    exit 1
+fi
+NCCL_REAL_BASENAME=$(basename "$NCCL_REAL_LIB")
+NCCL_MAJOR_BASENAME=$(echo "$NCCL_REAL_BASENAME" | sed -E 's/(libnccl\.so\.[0-9]+).*/\1/')
+[ -e "$NCCL_HOME/lib/libnccl.so" ]              || ln -s "$NCCL_REAL_BASENAME"  "$NCCL_HOME/lib/libnccl.so"
+[ -e "$NCCL_HOME/lib/$NCCL_MAJOR_BASENAME" ]    || ln -s "$NCCL_REAL_BASENAME"  "$NCCL_HOME/lib/$NCCL_MAJOR_BASENAME"
+echo "NCCL lib: $NCCL_REAL_BASENAME (+ symlinks libnccl.so, $NCCL_MAJOR_BASENAME)"
 
 # --- CUDA / MPI homes ------------------------------------------------------
 CUDA_HOME=${CUDA_HOME:-${CUDA_DIR:-}}
