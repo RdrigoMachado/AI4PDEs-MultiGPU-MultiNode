@@ -29,9 +29,8 @@ module list
 pip install --user "nvidia-nccl-cu12==${NCCL_PIP_VERSION}"
 
 NCCL_HOME=$(python3 -c "
-import os
 import nvidia.nccl as n
-print(os.path.dirname(n.__file__))
+print(n.__path__[0])
 ")
 if [ ! -f "$NCCL_HOME/include/nccl.h" ] || [ ! -f "$NCCL_HOME/lib/libnccl.so" ]; then
     echo "ERRO: NCCL incompleto em $NCCL_HOME (faltando include/nccl.h ou lib/libnccl.so)" >&2
