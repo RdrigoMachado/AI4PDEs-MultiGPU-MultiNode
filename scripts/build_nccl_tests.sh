@@ -80,8 +80,7 @@ echo ""
 echo "Build OK. Binários em: $NCCL_TESTS_DIR/build/"
 ls -1 "$NCCL_TESTS_DIR/build/"
 
-# --- Sanity rápido (só single-GPU; multi-GPU/multi-node via sbatch) -------
 echo ""
-echo "Sanity check (1 GPU):"
-"${NCCL_TESTS_DIR}/build/sendrecv_perf" -b 1K -e 1M -f 4 -g 1 -n 5 -w 2 -c 0 || \
-    echo "(sanity falhou — comum se não houver GPU no head node; rode via sbatch)"
+echo "Build pronto. O sbatch (run_nccl_tests.sbatch) já carrega os mesmos"
+echo "módulos e configura LD_LIBRARY_PATH para a libnccl pip-instalada."
+echo "Não rodar sanity no head node — não tem GPU."

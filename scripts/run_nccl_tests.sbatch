@@ -16,7 +16,10 @@
 #SBATCH -e /scratch/g-assimila/rodrigo.machado2/logs_comm/nccl_%j.err
 
 set -e
+# Mesmos módulos do build (build_nccl_tests.sh)
 module load python/3.10.16_sequana
+module load cuda/12.6_sequana
+module load openmpi/gnu/4.1.8+cuda-12.6_sequana
 
 LABEL=${1:-unlabeled}
 SCRATCH_DIR="/scratch/g-assimila/rodrigo.machado2"
@@ -24,6 +27,10 @@ NCCL_TESTS_DIR="${SCRATCH_DIR}/nccl-tests"
 OUT_DIR="${SCRATCH_DIR}/logs_comm/nccl_runs/${LABEL}_${SLURM_JOB_ID}"
 mkdir -p "${OUT_DIR}"
 cd "${OUT_DIR}"
+
+# NCCL via pip wheel — precisa estar no LD_LIBRARY_PATH em runtime
+NCCL_HOME=$(python3 -c "import nvidia.nccl as n; print(n.__path__[0])")
+export LD_LIBRARY_PATH="${NCCL_HOME}/lib:${LD_LIBRARY_PATH}"
 
 export NCCL_SOCKET_IFNAME=ib0
 export NCCL_DEBUG=WARN
