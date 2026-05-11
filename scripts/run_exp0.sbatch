@@ -47,7 +47,7 @@ STEPS=$9
 PROFILE=${10:-0}
 
 SCRATCH_DIR="/scratch/g-assimila/rodrigo.machado2"
-TOPO_DIR="${SCRATCH_DIR}/AI4PDEs-MultiGPU-MultiNode/topology"
+SRC_DIR="${SCRATCH_DIR}/AI4PDEs-MultiGPU-MultiNode/src"
 LOG_FILE="${SCRATCH_DIR}/logs_comm/exp0_${SLURM_JOB_ID}.out"
 
 # Cada run em CWD próprio para isolar FPS/ entre execuções concorrentes.
@@ -55,8 +55,8 @@ WORK_DIR="${SCRATCH_DIR}/logs_comm/exp0_runs/${HALO_STRATEGY}_r${RUN_ID}_${SLURM
 mkdir -p "${WORK_DIR}"
 cd "${WORK_DIR}"
 
-# main.py importa halo_exchange/solver/etc. por nome — adicionar topology ao path.
-export PYTHONPATH="${TOPO_DIR}:${PYTHONPATH}"
+# main.py importa halo_exchange/solver/etc. por nome — adicionar src ao path.
+export PYTHONPATH="${SRC_DIR}:${PYTHONPATH}"
 
 set +e
 srun python3 -m torch.distributed.run \
@@ -65,7 +65,7 @@ srun python3 -m torch.distributed.run \
     --rdzv_id=$SLURM_JOB_ID \
     --rdzv_backend=c10d \
     --rdzv_endpoint=$MASTER_ADDR:$MASTER_PORT \
-    "${TOPO_DIR}/main.py" \
+    "${SRC_DIR}/main.py" \
     --save $SAVE_FLAG \
     --debug 1 \
     --nx $NX --ny $NY --nz $NZ \

@@ -36,14 +36,14 @@ TOPOLOGY=$5
 STEPS=$6
 
 SCRATCH_DIR="/scratch/g-assimila/rodrigo.machado2"
-TOPO_DIR="${SCRATCH_DIR}/AI4PDEs-MultiGPU-MultiNode/topology"
+SRC_DIR="${SCRATCH_DIR}/AI4PDEs-MultiGPU-MultiNode/src"
 NODES=$SLURM_JOB_NUM_NODES
 
 WORK_DIR="${SCRATCH_DIR}/logs_comm/profile_runs/prof_${TOPOLOGY}_${NX}x${NY}x${NZ}_${NODES}n_r${RUN_ID}_${SLURM_JOB_ID}"
 mkdir -p "${WORK_DIR}"
 cd "${WORK_DIR}"
 
-export PYTHONPATH="${TOPO_DIR}:${PYTHONPATH}"
+export PYTHONPATH="${SRC_DIR}:${PYTHONPATH}"
 
 srun python3 -m torch.distributed.run \
     --nnodes=$SLURM_JOB_NUM_NODES \
@@ -51,7 +51,7 @@ srun python3 -m torch.distributed.run \
     --rdzv_id=$SLURM_JOB_ID \
     --rdzv_backend=c10d \
     --rdzv_endpoint=$MASTER_ADDR:$MASTER_PORT \
-    "${TOPO_DIR}/main.py" \
+    "${SRC_DIR}/main.py" \
     --save 0 \
     --debug 1 \
     --nx $NX --ny $NY --nz $NZ \
