@@ -23,7 +23,7 @@ Launched with `torch.distributed.run`. Required arguments:
 | `--topology`        | `1d-x` / `1d-y` / `1d-z` / `3d`     | Decomposition strategy; `3d` keeps subdomains cube-like and preserves multigrid depth |
 | `--halo-strategy`   | `blocking` / `async_b`              | `blocking` is the baseline; `async_b` issues `batch_isend_irecv` (validated, no measurable gain on V100) |
 | `--steps`           | int (default 40)                    | Number of timesteps                                          |
-| `--save`            | `0` / `1`                           | Gather + write `u/v/w/p` to `FPS/` every `n_out` steps       |
+| `--io-mode`         | `none` / `naive` / `async`          | `none` skips I/O; `naive` writes `u/v/w/p` synchronously every `n_out` steps; `async` offloads `np.save` to a rank-0 thread pool |
 | `--profile`         | `0` / `1`                           | Per-region timing with mandatory `cuda.synchronize`; small overhead |
 | `--profile-nvtx`    | `0` / `1`                           | Add NVTX ranges for `nsys` (requires `--profile=1`)          |
 | `--debug`           | `0` / `1`                           | Verbose step prints                                          |

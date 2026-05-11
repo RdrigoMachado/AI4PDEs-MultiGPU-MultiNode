@@ -52,7 +52,7 @@ srun python3 -m torch.distributed.run \
     --rdzv_backend=c10d \
     --rdzv_endpoint=$MASTER_ADDR:$MASTER_PORT \
     "${SRC_DIR}/main.py" \
-    --save 0 \
+    --io-mode none \
     --debug 1 \
     --nx $NX --ny $NY --nz $NZ \
     --topology $TOPOLOGY \

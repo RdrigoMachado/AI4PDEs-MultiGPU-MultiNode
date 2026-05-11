@@ -2,6 +2,7 @@
 import argparse
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -105,6 +106,11 @@ def train(topo, local_rank, nlevel):
         torch.cuda.reset_peak_memory_stats()
 
     save_time_accumulator = 0.0
+    # Async I/O: rank 0 owns the executor (only rank 0 writes after the gather).
+    io_executor = None
+    if IO_MODE == "async" and topo.rank == 0:
+        io_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="io")
+
     start = time.time()
 
     with torch.no_grad():
@@ -140,7 +146,7 @@ def train(topo, local_rank, nlevel):
             )
 
             # Outputs (Unificados)
-            if SAVE and itime % n_out == 0:
+            if IO_MODE != "none" and itime % n_out == 0:
                 start_save = time.time()
                 profiler.start("io_save")
 
@@ -153,18 +159,20 @@ def train(topo, local_rank, nlevel):
                     save_path = "FPS"
                     os.makedirs(save_path, exist_ok=True)
                     print(f"Saving step {itime}")
-                    np.save(
-                        save_path + "/w" + str(itime), arr=global_w.numpy()[0, 0, :, :]
+                    # Slice on the main thread; the resulting NumPy arrays are
+                    # detached from CUDA so the executor can write them safely.
+                    arrays = (
+                        ("w", global_w.numpy()[0, 0, :, :]),
+                        ("v", global_v.numpy()[0, 0, :, :]),
+                        ("u", global_u.numpy()[0, 0, :, :]),
+                        ("p", global_p.numpy()[0, 0, :, :]),
                     )
-                    np.save(
-                        save_path + "/v" + str(itime), arr=global_v.numpy()[0, 0, :, :]
-                    )
-                    np.save(
-                        save_path + "/u" + str(itime), arr=global_u.numpy()[0, 0, :, :]
-                    )
-                    np.save(
-                        save_path + "/p" + str(itime), arr=global_p.numpy()[0, 0, :, :]
-                    )
+                    if io_executor is not None:
+                        for name, arr in arrays:
+                            io_executor.submit(np.save, f"{save_path}/{name}{itime}", arr)
+                    else:
+                        for name, arr in arrays:
+                            np.save(f"{save_path}/{name}{itime}", arr)
 
                     # Opcional: Salvar Plot
                     try:
@@ -184,11 +192,20 @@ def train(topo, local_rank, nlevel):
                 save_time_accumulator += time.time() - start_save
             profiler.end("step_total")
 
+    # Drain pending writes before stopping the wall clock so the metric
+    # captures the full I/O cost, not just the submit overhead.
+    flush_time = 0.0
+    if io_executor is not None:
+        flush_start = time.time()
+        io_executor.shutdown(wait=True)
+        flush_time = time.time() - flush_start
+
     end = time.time()
 
     if topo.rank == 0:
         print(f"\nExecution_time,{end - start:.2f}s")
         print(f"\nSave_time,{save_time_accumulator:.2f}s")
+        print(f"\nFlush_time,{flush_time:.2f}s")
 
     if profiler.enabled:
         if torch.cuda.is_available():
@@ -223,11 +240,12 @@ if __name__ == "__main__":
     parser.add_argument("--ny", type=int, required=True, help="Tamanho global em Y")
     parser.add_argument("--nz", type=int, required=True, help="Tamanho global em Z")
     parser.add_argument(
-        "--save",
-        type=int,
-        default=0,
-        choices=[0, 1],
-        help="Salvar resultados (1) ou não (0)",
+        "--io-mode",
+        type=str,
+        default="none",
+        choices=["none", "naive", "async"],
+        help="I/O mode: none (skip), naive (synchronous np.save), "
+             "async (rank 0 ThreadPoolExecutor)",
     )
     parser.add_argument(
         "--debug",
@@ -282,7 +300,7 @@ if __name__ == "__main__":
     nx = args.nx
     ny = args.ny
     nz = args.nz
-    SAVE = bool(args.save)
+    IO_MODE = args.io_mode
     DEBUG_PRINTS = bool(args.debug)
 
     rank, world_size, local_rank = init_process(backend="nccl")

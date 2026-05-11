@@ -46,6 +46,10 @@ HALO_STRATEGY=$8
 STEPS=$9
 PROFILE=${10:-0}
 
+# Map the legacy SAVE_FLAG (0|1) used by Exp 0 wrappers onto --io-mode.
+# Exp 0 only exercises the synchronous path.
+if [ "$SAVE_FLAG" = "1" ]; then IO_MODE=naive; else IO_MODE=none; fi
+
 SCRATCH_DIR="/scratch/g-assimila/rodrigo.machado2"
 SRC_DIR="${SCRATCH_DIR}/AI4PDEs-MultiGPU-MultiNode/src"
 LOG_FILE="${SCRATCH_DIR}/logs_comm/exp0_${SLURM_JOB_ID}.out"
@@ -66,7 +70,7 @@ srun python3 -m torch.distributed.run \
     --rdzv_backend=c10d \
     --rdzv_endpoint=$MASTER_ADDR:$MASTER_PORT \
     "${SRC_DIR}/main.py" \
-    --save $SAVE_FLAG \
+    --io-mode $IO_MODE \
     --debug 1 \
     --nx $NX --ny $NY --nz $NZ \
     --topology $TOPOLOGY \
