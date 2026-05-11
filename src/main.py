@@ -4,13 +4,12 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.distributed as distributed
 
 import halo_exchange as halo_exchange_mod
-from halo_exchange import Topology, gather_all_data, init_process
+from halo_exchange import Topology, init_process
 from profiling import profiler
 from solver import AI4Urban, wA
 
@@ -106,10 +105,16 @@ def train(topo, local_rank, nlevel):
         torch.cuda.reset_peak_memory_stats()
 
     save_time_accumulator = 0.0
-    # Async I/O: rank 0 owns the executor (only rank 0 writes after the gather).
+    # Each rank writes its own subdomain — no gather, no central bottleneck.
+    # In async mode every rank owns a single-worker executor that overlaps
+    # np.save with the next solver steps.
     io_executor = None
-    if IO_MODE == "async" and topo.rank == 0:
-        io_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="io")
+    if IO_MODE == "async":
+        io_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix=f"io-r{topo.rank}"
+        )
+    if IO_MODE != "none":
+        os.makedirs("FPS", exist_ok=True)
 
     start = time.time()
 
@@ -150,43 +155,25 @@ def train(topo, local_rank, nlevel):
                 start_save = time.time()
                 profiler.start("io_save")
 
-                global_u = gather_all_data(values_u, topo)
-                global_v = gather_all_data(values_v, topo)
-                global_w = gather_all_data(values_w, topo)
-                global_p = gather_all_data(values_p, topo)
-
                 if topo.rank == 0:
-                    save_path = "FPS"
-                    os.makedirs(save_path, exist_ok=True)
                     print(f"Saving step {itime}")
-                    # Slice on the main thread; the resulting NumPy arrays are
-                    # detached from CUDA so the executor can write them safely.
-                    arrays = (
-                        ("w", global_w.numpy()[0, 0, :, :]),
-                        ("v", global_v.numpy()[0, 0, :, :]),
-                        ("u", global_u.numpy()[0, 0, :, :]),
-                        ("p", global_p.numpy()[0, 0, :, :]),
-                    )
-                    if io_executor is not None:
-                        for name, arr in arrays:
-                            io_executor.submit(np.save, f"{save_path}/{name}{itime}", arr)
-                    else:
-                        for name, arr in arrays:
-                            np.save(f"{save_path}/{name}{itime}", arr)
 
-                    # Opcional: Salvar Plot
-                    try:
-                        z_slice_idx = global_u.shape[2] // 2
-                        u_plot = global_u.numpy()[0, 0, z_slice_idx, :, :]
-                        plt.figure(figsize=(10, 6))
-                        plt.imshow(u_plot, cmap="jet", origin="upper")
-                        plt.colorbar(label="Velocity U (m/s)")
-                        plt.title(f"Velocity U - Z={z_slice_idx} - Step {itime}")
-                        plt.gca().invert_yaxis()
-                        plt.savefig(f"{save_path}/Flow_U_step_{itime:05d}.jpg", dpi=100)
-                        plt.close()
-                    except Exception as e:
-                        print(f"Erro salvando Plot: {e}")
+                # The .cpu() call is synchronous — the resulting NumPy array
+                # is independent of CUDA, so the executor can write it safely.
+                arrays = (
+                    ("u", values_u[0, 0].cpu().numpy()),
+                    ("v", values_v[0, 0].cpu().numpy()),
+                    ("w", values_w[0, 0].cpu().numpy()),
+                    ("p", values_p[0, 0].cpu().numpy()),
+                )
+                if io_executor is not None:
+                    for name, arr in arrays:
+                        io_executor.submit(
+                            np.save, f"FPS/{name}{topo.rank}_{itime}", arr
+                        )
+                else:
+                    for name, arr in arrays:
+                        np.save(f"FPS/{name}{topo.rank}_{itime}", arr)
 
                 profiler.end("io_save")
                 save_time_accumulator += time.time() - start_save

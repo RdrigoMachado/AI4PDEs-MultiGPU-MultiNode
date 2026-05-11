@@ -1,7 +1,8 @@
 #!/bin/bash
 # Sanity check for --io-mode async: 1 node, small grid, fast turnaround.
-# Validates that the rank-0 ThreadPoolExecutor writes complete files
+# Validates that every rank's ThreadPoolExecutor writes complete files
 # (uniform sizes per field) and that Save_time / Flush_time are reported.
+# Expected on 1 node × 4 GPUs × 4 save steps: 16 files per field.
 #
 # Submit:  sbatch scripts/smoke_io_async.sbatch
 #
