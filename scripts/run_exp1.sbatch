@@ -10,7 +10,7 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --gres=gpu:4
 #SBATCH --cpus-per-task=48
-#SBATCH --time=00:08:00
+#SBATCH --time=00:15:00
 #SBATCH --exclude=sdumont8086
 #SBATCH -J ai4pde_exp1
 #SBATCH -o /scratch/g-assimila/rodrigo.machado2/logs_comm/exp1_%j.out
