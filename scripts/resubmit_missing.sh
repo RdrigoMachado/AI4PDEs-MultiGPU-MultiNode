@@ -54,21 +54,16 @@ wait_for_slot() {
     done
 }
 
-# Returns the list of run_ids in the CSV that have SUCESSO for the given cell.
-successful_runs() {
-    local topo=$1 nodes=$2 io=$3
-    awk -F',' -v topo="${topo}" -v io="${io}" -v nodes="${nodes}" \
-        '$2=="SUCESSO" && $3==topo && $5==nodes && $4==io {print $9}' \
-        "${CSV_FILE}" | sort -un
-}
-
-# Print run_ids that are expected but missing for a given cell.
+# Print run_ids that are expected (1..n_runs) but have no SUCESSO entry in
+# the CSV for the given cell. Pure awk — no sort/comm dance — so it's
+# robust regardless of how SLURM jobids interleaved.
 missing_runs() {
     local topo=$1 nodes=$2 io=$3 n_runs=$4
-    local got expected
-    got=$(successful_runs "${topo}" "${nodes}" "${io}")
-    expected=$(seq 1 "${n_runs}")
-    comm -23 <(echo "${expected}" | sort -n) <(echo "${got}" | sort -n)
+    awk -F',' -v topo="${topo}" -v io="${io}" -v nodes="${nodes}" -v n="${n_runs}" '
+        BEGIN { for (i = 1; i <= n; i++) need[i] = 1 }
+        $2 == "SUCESSO" && $3 == topo && $5 == nodes && $4 == io { delete need[$9] }
+        END { for (i = 1; i <= n; i++) if (i in need) print i }
+    ' "${CSV_FILE}"
 }
 
 submit_cell() {
