@@ -79,3 +79,8 @@ else
 fi
 
 echo "${SLURM_JOB_ID},${STATUS},${TOPOLOGY},${IO_MODE},${NODES},${NX},${NY},${NZ},${RUN_ID},${STEPS},${EXEC_S},${SAVE_S},${FLUSH_S}" >> "${CSV_FILE}"
+
+# Drop the per-rank .npy dumps once metrics are recorded — each rank writes
+# ~800 MB per save in the Exp 1 grid, so a single naive 8n run produces
+# ~400 GB. The CSV captures the timings; the volumes have no further use.
+rm -rf "${WORK_DIR}/FPS"
