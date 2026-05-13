@@ -1,22 +1,17 @@
 #!/usr/bin/env python3
-"""Generate publication-grade figures from Exp 1 results.
+"""Publication figures for Exp 1 — Weak Scaling with I/O.
 
-Reads exp1_summary.csv (produced by exp1_summary.py) and emits PDF figures
-in <output_dir>. Designed for a single-column IEEE-style paper: serif font,
-sober palette, vector output.
-
-Figures produced:
-    fig_exec_vs_nodes_<topology>.pdf       T_exec vs nodes per io_mode
-    fig_overhead_vs_nodes_<topology>.pdf   I/O overhead (% over none) vs nodes
-    fig_save_flush_breakdown.pdf           Save vs Flush time, async vs naive
-    fig_weak_efficiency_<topology>.pdf     T(1) / T(N) per io_mode
+Reads exp1_results.csv and emits PDF figures per topology, styled for a
+single-column IEEE paper (serif, sober palette, vector output). The
+'none' baseline is drawn as a dotted black line on most figures so the
+reader sees instantly how each I/O mode tracks (or departs from) the
+ideal weak-scaling reference.
 
 Usage:
-    python tools/exp1_plots.py path/to/exp1_summary.csv [--outdir figs]
+    python tools/exp1_plots.py path/to/exp1_results.csv [--outdir figs]
 """
 
 import argparse
-import csv
 import os
 import sys
 from collections import defaultdict
@@ -25,90 +20,92 @@ import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from exp1_summary import load_runs, aggregate, derived  # noqa: E402
 
-# Okabe-Ito colorblind-safe palette, one color per io_mode.
+
+# Okabe-Ito colorblind-safe.
 COLOR = {"none": "#000000", "naive": "#D55E00", "async": "#0072B2"}
 MARKER = {"none": "o", "naive": "s", "async": "^"}
-LABEL = {"none": "no I/O", "naive": "naive (sync)", "async": "async (per-rank pool)"}
+LABEL = {"none": "no I/O (baseline)", "naive": "naive (sync)", "async": "async"}
 
 
 def setup_style():
     matplotlib.rcParams.update({
         "font.family": "serif",
         "font.serif": ["Times New Roman", "DejaVu Serif"],
-        "font.size": 9,
-        "axes.labelsize": 9,
-        "axes.titlesize": 10,
-        "legend.fontsize": 8,
-        "xtick.labelsize": 8,
-        "ytick.labelsize": 8,
+        "font.size": 10,
+        "axes.labelsize": 10,
+        "axes.titlesize": 11,
+        "legend.fontsize": 9,
+        "xtick.labelsize": 9,
+        "ytick.labelsize": 9,
         "axes.linewidth": 0.8,
         "xtick.direction": "in",
         "ytick.direction": "in",
-        "xtick.major.size": 3.5,
-        "ytick.major.size": 3.5,
-        "xtick.minor.size": 2.0,
-        "ytick.minor.size": 2.0,
+        "xtick.major.size": 4,
+        "ytick.major.size": 4,
+        "xtick.minor.size": 2.5,
+        "ytick.minor.size": 2.5,
         "legend.frameon": False,
-        "lines.linewidth": 1.3,
-        "lines.markersize": 5,
+        "lines.linewidth": 1.6,
+        "lines.markersize": 6,
         "savefig.dpi": 300,
         "savefig.bbox": "tight",
-        "savefig.pad_inches": 0.02,
+        "savefig.pad_inches": 0.05,
         "pdf.fonttype": 42,
         "ps.fonttype": 42,
     })
 
 
-def load_summary(path):
-    """Load exp1_summary.csv into a list of dicts (numeric fields parsed)."""
-    rows = []
-    with open(path, newline="") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            try:
-                row["nodes"] = int(row["nodes"])
-                row["n_runs"] = int(row["n_runs"])
-                for k in ("exec_mean", "exec_std", "save_mean", "save_std",
-                          "flush_mean", "flush_std"):
-                    row[k] = float(row[k])
-                row["overhead_pct"] = (float(row["overhead_pct"])
-                                       if row["overhead_pct"] else None)
-            except (ValueError, KeyError):
-                continue
-            rows.append(row)
-    return rows
+def sort_by_nodes(items, key="nodes"):
+    return sorted(items, key=lambda r: r[key])
 
 
-def by_topology(rows, topology):
-    return [r for r in rows if r["topology"] == topology]
+def series(rows, topology, io_mode, field):
+    sub = sort_by_nodes([r for r in rows
+                         if r["topology"] == topology and r["io_mode"] == io_mode])
+    return (np.array([r["nodes"] for r in sub]),
+            np.array([r[field] for r in sub]))
 
 
-def series(rows, io_mode, field):
-    """Return (nodes, values) sorted by nodes for a given io_mode."""
-    pts = sorted([(r["nodes"], r[field]) for r in rows if r["io_mode"] == io_mode])
-    if not pts:
-        return np.array([]), np.array([])
-    return np.array([p[0] for p in pts]), np.array([p[1] for p in pts])
+def io_modes_present(rows, topology):
+    return [io for io in ("none", "naive", "async")
+            if any(r for r in rows if r["topology"] == topology and r["io_mode"] == io)]
+
+
+def setup_node_axis(ax, all_nodes):
+    nodes = sorted(set(all_nodes))
+    ax.set_xscale("log", base=2)
+    ax.set_xticks(nodes)
+    ax.set_xticklabels([str(n) for n in nodes])
+    ax.set_xlim(min(nodes) * 0.85, max(nodes) * 1.18)
+    ax.set_xlabel("nodes")
 
 
 def fig_exec_vs_nodes(rows, topology, outdir):
-    fig, ax = plt.subplots(figsize=(3.3, 2.5))
-    for io in ("none", "naive", "async"):
-        x, y = series(rows, io, "exec_mean")
-        _, ystd = series(rows, io, "exec_std")
-        if len(x) == 0:
-            continue
-        ax.errorbar(x, y, yerr=ystd, color=COLOR[io], marker=MARKER[io],
-                    label=LABEL[io], capsize=2, linewidth=1.3)
+    """Headline figure: execution time vs nodes; baseline as dotted line."""
+    fig, ax = plt.subplots(figsize=(5.0, 3.0))
+    all_nodes = []
 
-    ax.set_xscale("log", base=2)
-    ax.set_xlabel("nodes")
+    # Baseline first (so it sits underneath the other curves visually).
+    for io in ("none", "naive", "async"):
+        if io not in io_modes_present(rows, topology):
+            continue
+        x, y = series(rows, topology, io, "exec_median")
+        _, q1 = series(rows, topology, io, "exec_q1")
+        _, q3 = series(rows, topology, io, "exec_q3")
+        all_nodes.extend(x)
+        style = {"color": COLOR[io], "marker": MARKER[io], "label": LABEL[io]}
+        if io == "none":
+            style.update({"linestyle": ":", "linewidth": 1.8})
+        ax.plot(x, y, **style)
+        ax.fill_between(x, q1, q3, color=COLOR[io], alpha=0.12, linewidth=0)
+
+    setup_node_axis(ax, all_nodes)
     ax.set_ylabel("execution time (s)")
-    ax.set_xticks([1, 2, 4, 8, 16, 20])
-    ax.set_xticklabels(["1", "2", "4", "8", "16", "20"])
     ax.legend(loc="upper left")
-    ax.grid(True, axis="y", alpha=0.3, linewidth=0.5)
+    ax.grid(True, axis="y", alpha=0.25, linewidth=0.5)
     out = os.path.join(outdir, f"fig_exec_vs_nodes_{topology}.pdf")
     fig.savefig(out)
     plt.close(fig)
@@ -116,103 +113,157 @@ def fig_exec_vs_nodes(rows, topology, outdir):
 
 
 def fig_overhead_vs_nodes(rows, topology, outdir):
-    fig, ax = plt.subplots(figsize=(3.3, 2.5))
+    """I/O overhead (%) over baseline — naive and async only."""
+    fig, ax = plt.subplots(figsize=(5.0, 3.0))
+    all_nodes = []
     for io in ("naive", "async"):
-        x, y = series(rows, io, "overhead_pct")
-        if len(x) == 0:
+        if io not in io_modes_present(rows, topology):
             continue
-        ax.plot(x, y, color=COLOR[io], marker=MARKER[io],
-                label=LABEL[io], linewidth=1.3)
+        x, y = series(rows, topology, io, "overhead_pct")
+        all_nodes.extend(x)
+        ax.plot(x, y, color=COLOR[io], marker=MARKER[io], label=LABEL[io])
 
-    ax.set_xscale("log", base=2)
-    ax.set_xlabel("nodes")
-    ax.set_ylabel("I/O overhead (\\%)" if matplotlib.rcParams["text.usetex"]
-                  else "I/O overhead (%)")
-    ax.set_xticks([1, 2, 4, 8, 16, 20])
-    ax.set_xticklabels(["1", "2", "4", "8", "16", "20"])
-    ax.axhline(0, color="grey", linewidth=0.4, linestyle=":")
+    setup_node_axis(ax, all_nodes)
+    ax.axhline(0, color="black", linestyle=":", linewidth=1.2,
+               label="baseline (no I/O)")
+    ax.set_ylabel("I/O overhead vs baseline (%)")
     ax.legend(loc="upper left")
-    ax.grid(True, axis="y", alpha=0.3, linewidth=0.5)
+    ax.grid(True, axis="y", alpha=0.25, linewidth=0.5)
     out = os.path.join(outdir, f"fig_overhead_vs_nodes_{topology}.pdf")
     fig.savefig(out)
     plt.close(fig)
     return out
 
 
+def fig_weak_efficiency(rows, topology, outdir):
+    """Weak-scaling efficiency = T(1, none) / T(N, io_mode)."""
+    fig, ax = plt.subplots(figsize=(5.0, 3.0))
+    all_nodes = []
+    for io in ("none", "naive", "async"):
+        if io not in io_modes_present(rows, topology):
+            continue
+        x, y = series(rows, topology, io, "weak_efficiency")
+        all_nodes.extend(x)
+        style = {"color": COLOR[io], "marker": MARKER[io], "label": LABEL[io]}
+        if io == "none":
+            style.update({"linestyle": ":", "linewidth": 1.8})
+        ax.plot(x, y, **style)
+
+    setup_node_axis(ax, all_nodes)
+    ax.axhline(1.0, color="grey", linestyle="--", linewidth=0.7)
+    ax.set_ylabel("weak-scaling efficiency  T(1) / T(N)")
+    ax.set_ylim(0.5, 1.1)
+    ax.legend(loc="lower left")
+    ax.grid(True, axis="y", alpha=0.25, linewidth=0.5)
+    out = os.path.join(outdir, f"fig_weak_efficiency_{topology}.pdf")
+    fig.savefig(out)
+    plt.close(fig)
+    return out
+
+
 def fig_save_flush_breakdown(rows, topology, outdir):
-    """Stacked bars: Save_time + Flush_time for naive vs async at each node count."""
-    naive_rows = sorted([r for r in rows
-                         if r["io_mode"] == "naive" and r["topology"] == topology],
-                        key=lambda r: r["nodes"])
-    async_rows = sorted([r for r in rows
-                         if r["io_mode"] == "async" and r["topology"] == topology],
-                        key=lambda r: r["nodes"])
-    nodes = sorted({r["nodes"] for r in naive_rows} | {r["nodes"] for r in async_rows})
+    """Stacked bars: Save (solid) + Flush (hatched) for naive vs async."""
+    naive = sort_by_nodes([r for r in rows
+                           if r["topology"] == topology and r["io_mode"] == "naive"])
+    asyn = sort_by_nodes([r for r in rows
+                          if r["topology"] == topology and r["io_mode"] == "async"])
+    nodes = sorted({r["nodes"] for r in naive} | {r["nodes"] for r in asyn})
     if not nodes:
         return None
 
-    fig, ax = plt.subplots(figsize=(3.5, 2.5))
+    fig, ax = plt.subplots(figsize=(5.2, 3.0))
     x = np.arange(len(nodes))
     width = 0.38
 
-    def get(rows_list, n, field):
-        for r in rows_list:
+    def lookup(rs, n, field):
+        for r in rs:
             if r["nodes"] == n:
                 return r[field]
         return 0.0
 
-    naive_save = [get(naive_rows, n, "save_mean") for n in nodes]
-    naive_flush = [get(naive_rows, n, "flush_mean") for n in nodes]
-    async_save = [get(async_rows, n, "save_mean") for n in nodes]
-    async_flush = [get(async_rows, n, "flush_mean") for n in nodes]
+    n_save = [lookup(naive, n, "save_median") for n in nodes]
+    n_flush = [lookup(naive, n, "flush_median") for n in nodes]
+    a_save = [lookup(asyn, n, "save_median") for n in nodes]
+    a_flush = [lookup(asyn, n, "flush_median") for n in nodes]
 
-    ax.bar(x - width/2, naive_save, width, color=COLOR["naive"], label="naive — Save",
-           edgecolor="black", linewidth=0.4)
-    ax.bar(x - width/2, naive_flush, width, bottom=naive_save,
-           color=COLOR["naive"], alpha=0.4, hatch="//",
-           label="naive — Flush", edgecolor="black", linewidth=0.4)
-    ax.bar(x + width/2, async_save, width, color=COLOR["async"], label="async — Save",
-           edgecolor="black", linewidth=0.4)
-    ax.bar(x + width/2, async_flush, width, bottom=async_save,
-           color=COLOR["async"], alpha=0.4, hatch="//",
-           label="async — Flush", edgecolor="black", linewidth=0.4)
+    ax.bar(x - width/2, n_save, width, color=COLOR["naive"],
+           label="naive — Save", edgecolor="black", linewidth=0.5)
+    ax.bar(x - width/2, n_flush, width, bottom=n_save, color="none",
+           edgecolor=COLOR["naive"], hatch="//", linewidth=0.5,
+           label="naive — Flush")
+    ax.bar(x + width/2, a_save, width, color=COLOR["async"],
+           label="async — Save", edgecolor="black", linewidth=0.5)
+    ax.bar(x + width/2, a_flush, width, bottom=a_save, color="none",
+           edgecolor=COLOR["async"], hatch="//", linewidth=0.5,
+           label="async — Flush")
 
     ax.set_xticks(x)
     ax.set_xticklabels([str(n) for n in nodes])
     ax.set_xlabel("nodes")
     ax.set_ylabel("time on critical path (s)")
-    ax.legend(loc="upper left", ncol=2)
-    ax.grid(True, axis="y", alpha=0.3, linewidth=0.5)
+    ax.legend(loc="upper left", ncol=2, columnspacing=1.0,
+              handletextpad=0.4)
+    ax.grid(True, axis="y", alpha=0.25, linewidth=0.5)
     out = os.path.join(outdir, f"fig_save_flush_breakdown_{topology}.pdf")
     fig.savefig(out)
     plt.close(fig)
     return out
 
 
-def fig_weak_efficiency(rows, topology, outdir):
-    """Weak-scaling efficiency = T(1) / T(N), one curve per io_mode."""
-    fig, ax = plt.subplots(figsize=(3.3, 2.5))
-    for io in ("none", "naive", "async"):
-        x, y = series(rows, io, "exec_mean")
-        if len(x) == 0:
+def fig_boxplot_distribution(runs, topology, outdir):
+    """Per-run distribution boxplot — exposes tails (Lustre variability)."""
+    groups = defaultdict(list)
+    for r in runs:
+        if r["topology"] != topology:
             continue
-        t1 = y[0] if x[0] == 1 else None
-        if t1 is None:
-            continue
-        eff = t1 / y
-        ax.plot(x, eff, color=COLOR[io], marker=MARKER[io],
-                label=LABEL[io], linewidth=1.3)
+        groups[(r["nodes"], r["io_mode"])].append(r["exec_s"])
+    if not groups:
+        return None
 
-    ax.set_xscale("log", base=2)
+    nodes = sorted({n for (n, _) in groups})
+    ios = ("none", "naive", "async")
+    width = 0.24
+    positions = {io: i for i, io in enumerate(ios)}
+
+    fig, ax = plt.subplots(figsize=(5.6, 3.0))
+    for io in ios:
+        data = []
+        x_pos = []
+        for i, n in enumerate(nodes):
+            vals = groups.get((n, io), [])
+            if vals:
+                data.append(vals)
+                x_pos.append(i + (positions[io] - 1) * width)
+        if not data:
+            continue
+        bp = ax.boxplot(data, positions=x_pos, widths=width,
+                        patch_artist=True, manage_ticks=False,
+                        showfliers=True, whis=1.5)
+        for box in bp["boxes"]:
+            box.set(facecolor=COLOR[io], edgecolor="black",
+                    linewidth=0.6, alpha=0.55)
+        for med in bp["medians"]:
+            med.set(color="black", linewidth=1.0)
+        for whisker in bp["whiskers"]:
+            whisker.set(color="black", linewidth=0.6)
+        for cap in bp["caps"]:
+            cap.set(color="black", linewidth=0.6)
+        for flier in bp["fliers"]:
+            flier.set(marker="o", markerfacecolor=COLOR[io],
+                      markeredgecolor="black", markersize=3.5,
+                      linestyle="none", alpha=0.8)
+
+    ax.set_xticks(range(len(nodes)))
+    ax.set_xticklabels([str(n) for n in nodes])
     ax.set_xlabel("nodes")
-    ax.set_ylabel("weak-scaling efficiency")
-    ax.set_xticks([1, 2, 4, 8, 16, 20])
-    ax.set_xticklabels(["1", "2", "4", "8", "16", "20"])
-    ax.axhline(1.0, color="grey", linewidth=0.4, linestyle=":")
-    ax.set_ylim(0, 1.1)
-    ax.legend(loc="lower left")
-    ax.grid(True, axis="y", alpha=0.3, linewidth=0.5)
-    out = os.path.join(outdir, f"fig_weak_efficiency_{topology}.pdf")
+    ax.set_ylabel("execution time (s)")
+    # Custom legend (boxes are bare colors).
+    from matplotlib.patches import Patch
+    handles = [Patch(facecolor=COLOR[io], edgecolor="black", alpha=0.55,
+                     label=LABEL[io]) for io in ios]
+    ax.legend(handles=handles, loc="upper left")
+    ax.grid(True, axis="y", alpha=0.25, linewidth=0.5)
+    out = os.path.join(outdir, f"fig_boxplot_{topology}.pdf")
     fig.savefig(out)
     plt.close(fig)
     return out
@@ -221,30 +272,30 @@ def fig_weak_efficiency(rows, topology, outdir):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("summary_csv", help="Path to exp1_summary.csv")
+    ap.add_argument("csv", help="Path to exp1_results.csv (raw runs)")
     ap.add_argument("--outdir", default="figs",
                     help="Directory for the figures (default: figs/)")
     args = ap.parse_args()
 
-    if not os.path.isfile(args.summary_csv):
-        print(f"ERRO: {args.summary_csv} não encontrado.", file=sys.stderr)
+    if not os.path.isfile(args.csv):
+        print(f"ERRO: {args.csv} não encontrado.", file=sys.stderr)
         sys.exit(1)
 
     os.makedirs(args.outdir, exist_ok=True)
     setup_style()
-    rows = load_summary(args.summary_csv)
-    if not rows:
-        print("Nenhuma linha no summary.", file=sys.stderr)
-        sys.exit(1)
 
-    topologies = sorted({r["topology"] for r in rows})
+    runs = load_runs(args.csv)
+    rows = derived(aggregate(runs))
+
     written = []
-    for topo in topologies:
-        sub = by_topology(rows, topo)
-        written.append(fig_exec_vs_nodes(sub, topo, args.outdir))
-        written.append(fig_overhead_vs_nodes(sub, topo, args.outdir))
-        written.append(fig_weak_efficiency(sub, topo, args.outdir))
-        out = fig_save_flush_breakdown(sub, topo, args.outdir)
+    for topo in sorted({r["topology"] for r in rows}):
+        written.append(fig_exec_vs_nodes(rows, topo, args.outdir))
+        written.append(fig_overhead_vs_nodes(rows, topo, args.outdir))
+        written.append(fig_weak_efficiency(rows, topo, args.outdir))
+        out = fig_save_flush_breakdown(rows, topo, args.outdir)
+        if out:
+            written.append(out)
+        out = fig_boxplot_distribution(runs, topo, args.outdir)
         if out:
             written.append(out)
 
