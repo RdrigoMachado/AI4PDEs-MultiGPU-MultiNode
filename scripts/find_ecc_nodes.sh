@@ -22,8 +22,9 @@ CSV_FILE="${LOGS_DIR}/exp1_results.csv"
 cd "${LOGS_DIR}" || { echo "ERRO: não achei ${LOGS_DIR}" >&2; exit 1; }
 [ -f "${CSV_FILE}" ] || { echo "ERRO: não achei ${CSV_FILE}" >&2; exit 1; }
 
-# Nó(s) faltoso(s) de um .err: host do bloco "Root Cause (first observed
-# failure)" cujo exitcode é 1. Ignora hosts mortos por signal/SIGTERM.
+# Nó faltoso de um .err: host do PRIMEIRO bloco "Root Cause (first observed
+# failure)" com exitcode 1 (a exceção que disparou tudo). Para no primeiro
+# acerto — blocos seguintes são peers derrubados em cascata, não o culpado.
 culprit_nodes() {
     awk '
         /Root Cause \(first observed failure\)/ { in_rc = 1; host = ""; next }
@@ -32,9 +33,9 @@ culprit_nodes() {
             match($0, /sdumont[0-9]+/); host = substr($0, RSTART, RLENGTH); next
         }
         in_rc && host != "" && /^[[:space:]]*exitcode[[:space:]]*:[[:space:]]*1([[:space:]]|\()/ {
-            print host; host = ""
+            print host; exit
         }
-    ' "$1" | sort -u
+    ' "$1"
 }
 
 failed_jobs=$(awk -F',' '$2 == "FALHA" { print $1 }' "${CSV_FILE}")
