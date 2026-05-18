@@ -12,7 +12,7 @@
 #SBATCH --cpus-per-task=48
 #SBATCH --time=00:15:00
 # Nós com ECC uncorrectable (hardware). Acrescente novos aqui, separados por vírgula.
-#SBATCH --exclude=sdumont8086,sdumont8008
+#SBATCH --exclude=sdumont8086,sdumont8008,sdumont8037
 #SBATCH -J ai4pde_exp1
 #SBATCH -o /scratch/g-assimila/rodrigo.machado2/logs_comm/exp1_%j.out
 #SBATCH -e /scratch/g-assimila/rodrigo.machado2/logs_comm/exp1_%j.err
