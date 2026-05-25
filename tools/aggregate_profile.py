@@ -7,10 +7,13 @@ Dois modos, detectados pelo conteúdo do diretório:
     Agrega entre ranks → tabela região × tempo (count, mean, std, min, max).
     Também imprime métricas pontuais (memória etc.) se metrics_rank*.csv existir.
 
-(B) Multi-run: <parent_dir> contém subpastas no padrão
-    prof_<topo>_<NX>x<NY>x<NZ>_<NODES>n_r<RUN>_<jobid>/
+(B) Multi-run: <parent_dir> contém subpastas em um dos padrões:
+      prof_<topo>_<NX>x<NY>x<NZ>_<NODES>n_r<RUN>_<jobid>/           (sem io_mode)
+      exp1_<topo>_<io_mode>_<NX>x<NY>x<NZ>_<NODES>n_r<RUN>_<jobid>/ (Exp 1)
     com profile_rank*.csv dentro. Agrega inter-rank por run, depois inter-run
-    por config (descartando r0 — warmup). Gera dois CSVs no parent_dir:
+    por config (descartando r0 — warmup). No padrão exp1, o io_mode entra no
+    cfg_key, então configs com o mesmo (topology, nodes, NZ) mas io_mode
+    diferente ficam separadas. Gera dois CSVs no parent_dir:
       profile_per_run.csv     — uma linha por (config, run, region)
       profile_per_config.csv  — uma linha por (config, region) com inter-run
     e imprime resumo por config no stdout.
@@ -28,8 +31,13 @@ import statistics
 import sys
 
 
-RUN_DIR_RE = re.compile(
+RUN_DIR_RE_PROF = re.compile(
     r"^prof_(?P<topo>[^_]+)_(?P<nx>\d+)x(?P<ny>\d+)x(?P<nz>\d+)"
+    r"_(?P<nodes>\d+)n_r(?P<run>\d+)_(?P<jobid>\d+)$"
+)
+RUN_DIR_RE_EXP1 = re.compile(
+    r"^exp1_(?P<topo>[^_]+)_(?P<io_mode>[^_]+)"
+    r"_(?P<nx>\d+)x(?P<ny>\d+)x(?P<nz>\d+)"
     r"_(?P<nodes>\d+)n_r(?P<run>\d+)_(?P<jobid>\d+)$"
 )
 
@@ -43,11 +51,17 @@ def load_rank_csv(path):
 
 
 def parse_run_dir_name(name):
-    m = RUN_DIR_RE.match(name)
-    if not m:
-        return None
+    m = RUN_DIR_RE_EXP1.match(name)
+    if m:
+        io_mode = m["io_mode"]
+    else:
+        m = RUN_DIR_RE_PROF.match(name)
+        if not m:
+            return None
+        io_mode = ""
     return {
         "topology": m["topo"],
+        "io_mode": io_mode,
         "nx": int(m["nx"]),
         "ny": int(m["ny"]),
         "nz": int(m["nz"]),
@@ -204,19 +218,23 @@ def aggregate_run_metrics(run_dir):
 
 
 def cfg_key(meta):
-    return f"{meta['topology']}_{meta['nx']}x{meta['ny']}x{meta['nz']}_{meta['nodes']}n"
+    io = meta.get("io_mode") or ""
+    io_part = f"_{io}" if io else ""
+    return f"{meta['topology']}{io_part}_{meta['nx']}x{meta['ny']}x{meta['nz']}_{meta['nodes']}n"
 
 
 def aggregate_multi_run(parent_dir, drop_warmup=True):
     runs = collect_runs(parent_dir)
     if not runs:
-        print(f"ERRO: nenhuma subpasta prof_*_r*_<jobid> em {parent_dir}", file=sys.stderr)
+        print(f"ERRO: nenhuma subpasta prof_*_r*_<jobid> ou "
+              f"exp1_*_*_*_r*_<jobid> em {parent_dir}", file=sys.stderr)
         return 2
 
     # Estrutura: per_cfg[cfg][region] = lista de mean_rank (1 por run medido)
     per_cfg_time = {}
     per_cfg_count = {}
     per_cfg_metrics = {}  # cfg -> metric -> list of (max-rank-by-run)
+    per_cfg_meta = {}     # cfg -> {topology, io_mode, nx, ny, nz, nodes}
     per_run_rows = []     # linhas de profile_per_run.csv
 
     n_warmup_skipped = 0
@@ -232,6 +250,7 @@ def aggregate_multi_run(parent_dir, drop_warmup=True):
             per_run_rows.append({
                 "config": cfg,
                 "topology": meta["topology"],
+                "io_mode": meta.get("io_mode", ""),
                 "nx": meta["nx"],
                 "ny": meta["ny"],
                 "nz": meta["nz"],
@@ -250,6 +269,12 @@ def aggregate_multi_run(parent_dir, drop_warmup=True):
             n_warmup_skipped += 1
             continue
 
+        per_cfg_meta.setdefault(cfg, {
+            "topology": meta["topology"],
+            "io_mode": meta.get("io_mode", ""),
+            "nx": meta["nx"], "ny": meta["ny"], "nz": meta["nz"],
+            "nodes": meta["nodes"],
+        })
         for region, d in agg_t.items():
             per_cfg_time.setdefault(cfg, {}).setdefault(region, []).append(d["mean_rank"])
             per_cfg_count.setdefault(cfg, {}).setdefault(region, d["count"])
@@ -259,8 +284,9 @@ def aggregate_multi_run(parent_dir, drop_warmup=True):
     # Dump per_run
     per_run_path = os.path.join(parent_dir, "profile_per_run.csv")
     with open(per_run_path, "w", newline="") as f:
-        cols = ["config", "topology", "nx", "ny", "nz", "nodes", "run", "jobid",
-                "warmup", "region", "count", "mean_rank_s", "max_rank_s", "min_rank_s"]
+        cols = ["config", "topology", "io_mode", "nx", "ny", "nz", "nodes",
+                "run", "jobid", "warmup", "region", "count",
+                "mean_rank_s", "max_rank_s", "min_rank_s"]
         w = csv.DictWriter(f, fieldnames=cols)
         w.writeheader()
         for row in per_run_rows:
@@ -270,16 +296,22 @@ def aggregate_multi_run(parent_dir, drop_warmup=True):
     # Dump per_config (timing)
     per_cfg_path = os.path.join(parent_dir, "profile_per_config.csv")
     with open(per_cfg_path, "w", newline="") as f:
-        cols = ["config", "region", "n_runs", "count_per_step",
+        cols = ["config", "topology", "io_mode", "nx", "ny", "nz", "nodes",
+                "region", "n_runs", "count_per_step",
                 "mean_s", "std_s", "min_s", "max_s"]
         w = csv.DictWriter(f, fieldnames=cols)
         w.writeheader()
         for cfg, region_dict in per_cfg_time.items():
+            cm = per_cfg_meta[cfg]
             for region, vs in region_dict.items():
                 m = statistics.mean(vs)
                 sd = statistics.stdev(vs) if len(vs) > 1 else 0.0
                 w.writerow({
                     "config": cfg,
+                    "topology": cm["topology"],
+                    "io_mode": cm["io_mode"],
+                    "nx": cm["nx"], "ny": cm["ny"], "nz": cm["nz"],
+                    "nodes": cm["nodes"],
                     "region": region,
                     "n_runs": len(vs),
                     "count_per_step": per_cfg_count[cfg][region],
