@@ -114,6 +114,19 @@ submit_wave2() {
     done
 }
 
+submit_fill_1dz() {
+    # Fill the 1D-Z sweep at 2 and 8 nodes so it pairs with the 3D
+    # {1,2,4,8,16} node series. Original waves only ran 1D-Z in {1,4,16}.
+    echo "[$(ts)] === Fill: 1D-Z at 2 and 8 nodes ==="
+    for nodes in 2 8; do
+        for io in none naive async; do
+            for run in $(seq 1 5); do
+                submit_one fill1dz "${nodes}" 1d-z "${io}" "${run}" || true
+            done
+        done
+    done
+}
+
 print_summary() {
     echo
     echo "[$(ts)] All requested jobs submitted. Track with:"
@@ -149,12 +162,22 @@ case "${WAVE}" in
         submit_wave2
         print_summary
         ;;
-    help|*)
-        echo "Usage: $0 {wave1|wave2|all}"
+    fill1dz)
+        echo "Exp 1 — submitting 1D-Z fill (2 and 8 nodes)"
+        echo "  Partition:    ${PARTITION}"
+        echo "  STEPS:        ${STEPS}"
+        echo "  MAX_INFLIGHT: ${MAX_INFLIGHT}"
         echo
-        echo "  wave1  150 jobs: 3D in {1,2,4,8} nodes + 1D-Z in {1,4}"
-        echo "  wave2   75 jobs: 3D in {16,20} nodes  + 1D-Z in {16}"
-        echo "  all    submits both, wave1 before wave2"
+        submit_fill_1dz
+        print_summary
+        ;;
+    help|*)
+        echo "Usage: $0 {wave1|wave2|all|fill1dz}"
+        echo
+        echo "  wave1    150 jobs: 3D in {1,2,4,8} nodes + 1D-Z in {1,4}"
+        echo "  wave2     75 jobs: 3D in {16,20} nodes  + 1D-Z in {16}"
+        echo "  all      submits both, wave1 before wave2"
+        echo "  fill1dz   30 jobs: 1D-Z in {2,8} nodes (pairs 1D-Z with 3D)"
         exit 1
         ;;
 esac
