@@ -1,18 +1,19 @@
 #!/bin/bash
 # Wrapper for the Strong scaling experiment.
 #
-# Global grid is FIXED at 256 x 256 x 8192; the per-GPU subdomain shrinks as
+# Global grid is FIXED at 256 x 256 x 12288; the per-GPU subdomain shrinks as
 # nodes grow. 3D decomposition (PX=PY=2, PZ=nodes) keeps local_nx=local_ny=128
 # constant, so the multigrid depth is pinned at nlevel=7 for every node count
 # (verify in the .out banner: "Max Multigrid Levels: 7").
 #
 # (nlevel=8 would need local 256 -> nz>=4096 -> 256x256x4096 = 268M cells/GPU
-# at 1 node, which OOMs on the 32 GB V100. nlevel=7 fits at ~16 GB/GPU and
-# still reaches 16 nodes; see commit history.)
+# at 1 node, which OOMs on the 32 GB V100. nlevel=7 with nz=12288 gives 201M
+# cells/GPU at 1 node (~24 GB) -- same per-GPU load as the weak experiments --
+# and still reaches 16 nodes; see commit history.)
 #
 #   3D x {1,2,4,8,16} nodes x io=none x RUNS runs
 #
-# Walltime per node count (the heaviest run is 1 node, ~134M cells/GPU):
+# Walltime per node count (the heaviest run is 1 node, ~201M cells/GPU, ~263s):
 #   1,2,4 nodes -> 8 min ; 8,16 nodes -> 5 min.
 #
 # Usage:
@@ -37,10 +38,13 @@ PARTITION=${PARTITION:-sequana_gpu}
 MAX_INFLIGHT=${MAX_INFLIGHT:-20}   # leave headroom under MaxSubmit=24
 
 # FIXED global grid (strong scaling). NX=NY=256 -> local 128x128 (pins nlevel=7);
-# NZ=8192 -> local_nz=8192/nodes, >=128 up to 16 nodes.
+# NZ=12288 -> local_nz=12288/nodes, >=128 up to 16 nodes (768 at 16n).
+# 128x128x12288 = 201M cells/GPU at 1 node (~24 GB) -- matches the per-GPU load
+# of the weak-scaling experiments (512x384x1024 = 201M), so the GPU is loaded
+# consistently across the paper. (256x256x4096 / nlevel=8 = 268M OOMs.)
 NX=256
 NY=256
-NZ=8192
+NZ=12288
 TOPO=3d
 IO=none
 
