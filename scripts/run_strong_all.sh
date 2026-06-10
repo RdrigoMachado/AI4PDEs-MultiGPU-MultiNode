@@ -1,14 +1,18 @@
 #!/bin/bash
 # Wrapper for the Strong scaling experiment.
 #
-# Global grid is FIXED at 512 x 512 x 4096; the per-GPU subdomain shrinks as
-# nodes grow. 3D decomposition (PX=PY=2, PZ=nodes) keeps local_nx=local_ny=256
-# constant, so the multigrid depth is pinned at nlevel=8 for every node count
-# (verify in the .out banner: "Max Multigrid Levels: 8").
+# Global grid is FIXED at 256 x 256 x 8192; the per-GPU subdomain shrinks as
+# nodes grow. 3D decomposition (PX=PY=2, PZ=nodes) keeps local_nx=local_ny=128
+# constant, so the multigrid depth is pinned at nlevel=7 for every node count
+# (verify in the .out banner: "Max Multigrid Levels: 7").
+#
+# (nlevel=8 would need local 256 -> nz>=4096 -> 256x256x4096 = 268M cells/GPU
+# at 1 node, which OOMs on the 32 GB V100. nlevel=7 fits at ~16 GB/GPU and
+# still reaches 16 nodes; see commit history.)
 #
 #   3D x {1,2,4,8,16} nodes x io=none x RUNS runs
 #
-# Walltime per node count (the heaviest run is 1 node, ~268M cells/GPU):
+# Walltime per node count (the heaviest run is 1 node, ~134M cells/GPU):
 #   1,2,4 nodes -> 8 min ; 8,16 nodes -> 5 min.
 #
 # Usage:
@@ -32,11 +36,11 @@ RUNS=${RUNS:-10}
 PARTITION=${PARTITION:-sequana_gpu}
 MAX_INFLIGHT=${MAX_INFLIGHT:-20}   # leave headroom under MaxSubmit=24
 
-# FIXED global grid (strong scaling). NX=NY=512 -> local 256x256 (pins nlevel=8);
-# NZ=4096 -> local_nz=4096/nodes, >=256 up to 16 nodes.
-NX=512
-NY=512
-NZ=4096
+# FIXED global grid (strong scaling). NX=NY=256 -> local 128x128 (pins nlevel=7);
+# NZ=8192 -> local_nz=8192/nodes, >=128 up to 16 nodes.
+NX=256
+NY=256
+NZ=8192
 TOPO=3d
 IO=none
 
@@ -112,7 +116,7 @@ print_summary() {
     echo "[$(ts)] Submitted. Track with:"
     echo "  squeue --me -p ${PARTITION}"
     echo "  tail -f ${CSV_FILE}"
-    echo "  grep -H 'Max Multigrid Levels' ${LOGS_DIR}/strong_*.out   # confirm nlevel=8 everywhere"
+    echo "  grep -H 'Max Multigrid Levels' ${LOGS_DIR}/strong_*.out   # confirm nlevel=7 everywhere"
 }
 
 MODE=${1:-help}

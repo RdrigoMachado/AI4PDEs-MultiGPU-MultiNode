@@ -3,9 +3,10 @@
 #
 # Global grid is FIXED across node counts (true strong scaling): the per-GPU
 # subdomain shrinks as nodes grow. With the 3D decomposition (PX=PY=2,
-# PZ=nodes) and global 512x512x4096, local_nx=local_ny=256 are constant and
-# local_nz=4096/nodes stays >=256 up to 16 nodes, so the multigrid depth
-# (nlevel) is pinned at 8 for every node count.
+# PZ=nodes) and global 256x256x8192, local_nx=local_ny=128 are constant and
+# local_nz=8192/nodes stays >=128 up to 16 nodes, so the multigrid depth
+# (nlevel) is pinned at 7 for every node count. (512x512x4096 / nlevel=8
+# would OOM the 32 GB V100 at 1 node: 268M cells/GPU.)
 #
 # --nodes and --time are passed via CLI by the wrapper, so the same script
 # handles 1..16 nodes with per-node-count walltime.
