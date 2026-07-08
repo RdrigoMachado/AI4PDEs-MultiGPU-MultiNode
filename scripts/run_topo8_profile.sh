@@ -26,8 +26,9 @@ STEPS=${STEPS:-40}
 PARTITION=${PARTITION:-sequana_gpu}
 WALLTIME=${WALLTIME:-00:15:00}
 GRID=${GRID:-"3200 1280 1280"}
-# ECC uncorrectable / lentos conhecidos (sdumont8009 confirmado ECC em 2026-07-08).
-EXCLUDE=${EXCLUDE:-sdumont8009,sdumont8086,sdumont8008,sdumont8037,sdumont8095}
+# ECC uncorrectable / lentos conhecidos (sdumont8009 e sdumont8082 confirmados
+# ECC em 2026-07-08).
+EXCLUDE=${EXCLUDE:-sdumont8009,sdumont8082,sdumont8086,sdumont8008,sdumont8037,sdumont8095}
 # shellcheck disable=SC2206
 TOPOS=(${TOPOS:-3d slab-y-2d})
 
