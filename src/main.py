@@ -246,8 +246,9 @@ if __name__ == "__main__":
         "--topology",
         type=str,
         default="1d-z",
-        choices=["1d-x", "1d-y", "1d-z", "3d"],
-        help="Estratégia de divisão da malha (Decomposition Topology)",
+        choices=["1d-x", "1d-y", "1d-z", "3d", "slab-y-2d"],
+        help="Estratégia de divisão da malha (Decomposition Topology). "
+             "slab-y-2d: slabs em Y entre nós + 2D XY intra-nó (NVLink).",
     )
     parser.add_argument(
         "--halo-strategy",
@@ -290,10 +291,13 @@ if __name__ == "__main__":
     IO_MODE = args.io_mode
     DEBUG_PRINTS = bool(args.debug)
 
-    rank, world_size, local_rank = init_process(backend="nccl")
+    rank, world_size, local_rank, local_world_size = init_process(backend="nccl")
 
     try:
-        topo = Topology(args.topology, rank, world_size, nx, ny, nz)
+        topo = Topology(
+            args.topology, rank, world_size, nx, ny, nz,
+            gpus_per_node=local_world_size,
+        )
         nlevel = calculate_max_nlevel(topo.local_nx, topo.local_ny, topo.local_nz)
 
         if rank == 0 and DEBUG_PRINTS:

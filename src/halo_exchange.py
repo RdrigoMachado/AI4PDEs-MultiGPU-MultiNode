@@ -24,13 +24,29 @@ def get_strategy():
     return _STRATEGY
 
 
+def _factor_2d_xy(g):
+    """Fatora G GPUs/nó numa malha 2D XY (gx, gy) o mais quadrada possível; gz=1.
+
+    Ex.: G=4 -> (2,2); G=8 -> (2,4); G=6 -> (2,3); G=2 -> (1,2).
+    """
+    gx = int(g ** 0.5)
+    while g % gx != 0:
+        gx -= 1
+    return gx, g // gx
+
+
 class Topology:
-    def __init__(self, decomp_type, rank, world_size, nx, ny, nz):
+    def __init__(self, decomp_type, rank, world_size, nx, ny, nz, gpus_per_node=None):
         self.decomp_type = decomp_type
         self.rank = rank
         self.world_size = world_size
 
         self.PZ, self.PY, self.PX = 1, 1, 1
+        # Malha intra-nó (gx,gy,gz) e nº de nós N — só relevantes para topologias
+        # hierárquicas (slab-y-2d). Triviais para as decomposições flat.
+        self.gx, self.gy, self.gz = 1, 1, 1
+        self.G = world_size
+        self.N = 1
 
         if world_size == 1:
             pass
@@ -48,6 +64,22 @@ class Topology:
             self.PX = 2
             self.PY = 2
             self.PZ = max(1, world_size // 4)
+        elif decomp_type == "slab-y-2d":
+            # Hierárquica: slabs em Y entre nós (IB), malha 2D XY dentro do nó
+            # (NVLink). Sem corte em Z (gz=1).
+            G = gpus_per_node if gpus_per_node else world_size
+            if world_size % G != 0:
+                raise ValueError(
+                    f"slab-y-2d: world_size ({world_size}) não divisível por "
+                    f"GPUs/nó ({G})."
+                )
+            self.gx, self.gy = _factor_2d_xy(G)
+            self.gz = 1
+            self.G = G
+            self.N = world_size // G
+            self.PX = self.gx
+            self.PY = self.N * self.gy
+            self.PZ = self.gz
         else:
             raise ValueError(f"Unknown decomposition: {decomp_type}")
 
@@ -57,10 +89,17 @@ class Topology:
             )
 
         # Rank's grid coordinates
-        self.pz = rank // (self.PY * self.PX)
-        rem = rank % (self.PY * self.PX)
-        self.py = rem // self.PX
-        self.px = rem % self.PX
+        if decomp_type == "slab-y-2d" and world_size > 1:
+            node = rank // self.G
+            lr = rank % self.G
+            self.px = lr % self.gx
+            self.py = node * self.gy + lr // self.gx
+            self.pz = 0
+        else:
+            self.pz = rank // (self.PY * self.PX)
+            rem = rank % (self.PY * self.PX)
+            self.py = rem // self.PX
+            self.px = rem % self.PX
 
         # Local size
         self.local_nx = nx // self.PX
@@ -86,9 +125,15 @@ class Topology:
         }
 
     def get_rank(self, z, y, x):
-        if 0 <= z < self.PZ and 0 <= y < self.PY and 0 <= x < self.PX:
-            return z * (self.PY * self.PX) + y * self.PX + x
-        return -1
+        if not (0 <= z < self.PZ and 0 <= y < self.PY and 0 <= x < self.PX):
+            return -1
+        if self.decomp_type == "slab-y-2d" and self.world_size > 1:
+            node = y // self.gy
+            iy = y % self.gy
+            # gz==1 => z==0; iz mantido para generalidade futura.
+            lr = z * (self.gx * self.gy) + iy * self.gx + x
+            return node * self.G + lr
+        return z * (self.PY * self.PX) + y * self.PX + x
 
 
 def init_process(backend="nccl"):
@@ -100,6 +145,11 @@ def init_process(backend="nccl"):
         print("Error")
         exit(1)
 
+    # GPUs por nó: torchrun exporta LOCAL_WORLD_SIZE; fallback p/ SLURM.
+    # Usado pelas topologias hierárquicas (slab-y-2d). None => assume 1 nó.
+    lws = os.environ.get("LOCAL_WORLD_SIZE") or os.environ.get("SLURM_NTASKS_PER_NODE")
+    local_world_size = int(lws) if lws else None
+
     device_id = torch.device(f"cuda:{local_rank}")
     torch.cuda.set_device(device_id)
 
@@ -109,7 +159,7 @@ def init_process(backend="nccl"):
         )
 
     dist.barrier()
-    return rank, world_size, local_rank
+    return rank, world_size, local_rank, local_world_size
 
 
 def gather_all_data(local_tensor, topo):
@@ -132,7 +182,7 @@ def gather_all_data(local_tensor, topo):
             for y in range(topo.PY):
                 slices_x = []
                 for x in range(topo.PX):
-                    idx = z * (topo.PY * topo.PX) + y * topo.PX + x
+                    idx = topo.get_rank(z, y, x)
                     slices_x.append(gathered_list[idx])
                 row_x = torch.cat(slices_x, dim=4)
                 slices_y.append(row_x)
