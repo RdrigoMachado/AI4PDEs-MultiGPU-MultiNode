@@ -41,11 +41,25 @@ TOPO_ORDER = ["3d", "slab-y-2d"]
 TOPO_COLOR = {"3d": "#4C72B0", "slab-y-2d": "#DD8452"}
 TOPO_LABEL = {"3d": "3D  (corta Z / IB)", "slab-y-2d": "slab-y-2d  (corta Y / IB)"}
 
-DIR_RE = re.compile(r"prof_(?P<topo>.+)_(?P<grid>\d+x\d+x\d+)_(?P<nodes>\d+)n_r(?P<run>\d+)_")
+DIR_RE = re.compile(r"prof_(?P<topo>.+)_(?P<grid>\d+x\d+x\d+)_(?P<nodes>\d+)n_r(?P<run>\d+)_(?P<job>\d+)")
+EXEC_RE = re.compile(r"Execution_time,\s*([\d.]+)\s*s")
 
 
-def load_run(run_dir):
-    """{region: mean_time_s_entre_ranks}, e o step_total máximo (caminho crítico)."""
+def _exec_from_out(root, job):
+    """Fallback: Execution_time do profile_<job>.out (quando faltam os profile_rank*)."""
+    for fp in glob.glob(os.path.join(root, "**", f"profile_{job}.out"), recursive=True):
+        try:
+            with open(fp) as fh:
+                m = EXEC_RE.search(fh.read())
+            if m:
+                return float(m.group(1))
+        except OSError:
+            pass
+    return None
+
+
+def load_run(run_dir, root, job):
+    """Run -> dict com region_mean (pode ser {}), tempo de execução e has_profile."""
     per_region = defaultdict(list)
     for fp in glob.glob(os.path.join(run_dir, "profile_rank*.csv")):
         with open(fp, newline="") as fh:
@@ -54,15 +68,17 @@ def load_run(run_dir):
                     per_region[row["region"]].append(float(row["time_s"]))
                 except (ValueError, KeyError):
                     pass
-    if not per_region:
-        return None
     region_mean = {r: statistics.fmean(v) for r, v in per_region.items()}
-    step_max = max(per_region.get("step_total", [region_mean.get("step_total", 0.0)]))
-    return region_mean, step_max
+    step = max(per_region["step_total"]) if per_region.get("step_total") else None
+    if step is None:
+        step = _exec_from_out(root, job)      # sem profile_rank*: usa o .out
+    if step is None:
+        return None                            # nem profile nem .out -> job falho
+    return {"region": region_mean, "step": step, "has_profile": bool(per_region)}
 
 
 def collect(root, grid, nodes):
-    """runs[topo] = lista de (region_mean, step_max), filtrando grid/nodes."""
+    """runs[topo] = lista de dicts (um por run), filtrando grid/nodes."""
     runs = defaultdict(list)
     for d in sorted(glob.glob(os.path.join(root, "**", "prof_*"), recursive=True)):
         if not os.path.isdir(d):
@@ -74,7 +90,7 @@ def collect(root, grid, nodes):
             continue
         if nodes and int(m["nodes"]) != nodes:
             continue
-        res = load_run(d)
+        res = load_run(d, root, m["job"])
         if res:
             runs[m["topo"]].append(res)
     return runs
@@ -85,8 +101,8 @@ def ordered_topos(runs):
 
 
 def avg(runs_list, region):
-    """Média, entre runs, do valor médio-entre-ranks de `region`."""
-    vals = [rm.get(region, 0.0) for rm, _ in runs_list]
+    """Média, entre runs COM profile, do valor médio-entre-ranks de `region`."""
+    vals = [r["region"].get(region, 0.0) for r in runs_list if r["has_profile"]]
     return statistics.fmean(vals) if vals else 0.0
 
 
@@ -94,7 +110,7 @@ def plot_time(runs, out):
     topos = ordered_topos(runs)
     fig, ax = plt.subplots(figsize=(4.4, 4.0))
     for i, topo in enumerate(topos):
-        steps = [smax for _, smax in runs[topo]]
+        steps = [r["step"] for r in runs[topo]]
         mean = statistics.fmean(steps)
         lo, hi = min(steps), max(steps)
         ax.bar(i, mean, width=0.6, color=TOPO_COLOR.get(topo, f"C{i}"), alpha=0.9,
@@ -184,13 +200,19 @@ def _save(fig, out):
 def print_summary(runs):
     for topo in ordered_topos(runs):
         rl = runs[topo]
-        step = statistics.fmean([s for _, s in rl])
-        halo = avg(rl, "halo_total")
-        hx, hy = avg(rl, "halo_X"), avg(rl, "halo_Y")
-        hz = avg(rl, "halo_Z_phase1") + avg(rl, "halo_Z_phase2")
-        print(f"{topo:>10}  runs={len(rl)}  step_total={step:7.2f}s  "
-              f"halo_total={halo:6.2f}s ({halo/step*100:4.1f}%)  "
-              f"[X={hx:.2f} Y={hy:.2f} Z={hz:.2f}]")
+        steps = [r["step"] for r in rl]
+        nprof = sum(r["has_profile"] for r in rl)
+        line = (f"{topo:>10}  runs={len(rl)} (profile={nprof})  "
+                f"exec min={min(steps):7.2f}s mean={statistics.fmean(steps):7.2f}s "
+                f"max={max(steps):7.2f}s")
+        if nprof:
+            halo = avg(rl, "halo_total")
+            hx, hy = avg(rl, "halo_X"), avg(rl, "halo_Y")
+            hz = avg(rl, "halo_Z_phase1") + avg(rl, "halo_Z_phase2")
+            step = avg(rl, "step_total") or statistics.fmean(steps)
+            line += (f"  halo_total={halo:6.2f}s ({halo / step * 100:4.1f}%) "
+                     f"[X={hx:.2f} Y={hy:.2f} Z={hz:.2f}]")
+        print(line)
 
 
 def main():
@@ -209,7 +231,12 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
     print_summary(runs)
     plot_time(runs, os.path.join(out_dir, "topo8_time.pdf"))
-    plot_profile(runs, os.path.join(out_dir, "topo8_profile.pdf"))
+
+    if any(r["has_profile"] for rl in runs.values() for r in rl):
+        plot_profile(runs, os.path.join(out_dir, "topo8_profile.pdf"))
+    else:
+        print("AVISO: nenhum profile_rank*.csv encontrado (só metrics_rank*/.out) — "
+              "gráfico de profiling PULADO. Recopie os profile_rank*.csv do cluster.")
 
 
 if __name__ == "__main__":
